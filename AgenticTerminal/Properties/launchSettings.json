@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "AgenticTerminal": {
+      "commandName": "Project"
+    },
+    "AgenticTerminal.WindowsTerminal": {
+      "commandName": "Executable",
+      "executablePath": "wt.exe",
+      "workingDirectory": "D:\\source\\AgenticTerminal",
+      "commandLineArgs": "-d D:\\source\\AgenticTerminal pwsh.exe -NoExit -Command \"dotnet run --project .\\AgenticTerminal\\AgenticTerminal.csproj\""
+    }
+  }
+}

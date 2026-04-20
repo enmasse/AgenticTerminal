@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="AgenticTerminal.Tests/AgenticTerminal.Tests.csproj" />
+  <Project Path="AgenticTerminal/AgenticTerminal.csproj" />
+</Solution>

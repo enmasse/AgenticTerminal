@@ -15,6 +15,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
     private const string ApprovalMetricName = "approval-prompt";
     private const string SessionsMetricName = "sessions-list";
     private const string PromptMetricName = "agent-prompt";
+    private const string ModelDialogListMetricName = "model-dialog-list";
 
     internal static bool MatchesApprovalInput(string text, char expected)
     {
@@ -26,6 +27,8 @@ public sealed class Hex1bApplicationShell : IApplicationShell
     private readonly Hex1bShellState _state = new();
     private readonly Hex1bTerminalSessionWorkloadAdapter _terminalWorkloadAdapter;
     private readonly TerminalWidgetHandle _terminalWidgetHandle;
+    private WindowHandle? _modelDialogWindow;
+    private Action? _requestModelDialogFocus;
 
     public Hex1bApplicationShell(CopilotAgentSessionManager sessionManager, ITerminalSession terminalSession)
     {
@@ -48,35 +51,36 @@ public sealed class Hex1bApplicationShell : IApplicationShell
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var originalWindowTitle = Console.Title;
+
         await using var app = new Hex1bApp(
             _ =>
-                _.HSplitter(
-                    BuildLeftPane(_),
-                    BuildAgentPanel(_),
-                    _state.TerminalPaneWidth).WithInputBindings(bindings =>
+                _.WindowPanel()
+                .Background(windowPanel => BuildApplicationContent(windowPanel))
+                .WithInputBindings(bindings =>
                 {
-                    bindings.Ctrl().Key(Hex1bKey.T).Action(ctx => FocusWidget(ctx, Hex1bFocusTarget.Terminal), "Focus terminal");
-                    bindings.Ctrl().Key(Hex1bKey.P).Action(ctx => FocusWidget(ctx, Hex1bFocusTarget.Prompt), "Focus prompt");
-                    bindings.Ctrl().Key(Hex1bKey.S).Action(ctx => FocusWidget(ctx, Hex1bFocusTarget.Sessions), "Focus sessions");
-                    bindings.Ctrl().Key(Hex1bKey.N).Action(async () => await _sessionManager.CreateNewSessionAsync(), "New session");
-                    bindings.Ctrl().Key(Hex1bKey.LeftArrow).Action(() => _state.TerminalPaneWidth = Math.Max(MinimumTerminalPaneWidth, _state.TerminalPaneWidth - 5), "Shrink terminal pane");
-                    bindings.Ctrl().Key(Hex1bKey.RightArrow).Action(() => _state.TerminalPaneWidth = Math.Min(MaximumTerminalPaneWidth, _state.TerminalPaneWidth + 5), "Grow terminal pane");
+                    ConfigureGlobalBindings(bindings);
                     if (_sessionManager.PendingApproval is not null)
                     {
-                        bindings.Key(Hex1bKey.Y).Action(async () => await ResolveApprovalAsync(approved: true), "Approve command");
-                        bindings.Key(Hex1bKey.N).Action(async () => await ResolveApprovalAsync(approved: false), "Deny command");
-                        bindings.Character(text => MatchesApprovalInput(text, 'y'))
-                            .Action(async (text, ctx) => await ResolveApprovalAsync(approved: true), "Approve command");
-                        bindings.Character(text => MatchesApprovalInput(text, 'n'))
-                            .Action(async (text, ctx) => await ResolveApprovalAsync(approved: false), "Deny command");
+                        Hex1bShellInputBindings.ConfigureApprovalBindings(
+                            bindings,
+                            () => ResolveApprovalAsync(approved: true),
+                            () => ResolveApprovalAsync(approved: false));
                     }
 
-                    bindings.Ctrl().Key(Hex1bKey.Q).Action(ctx => ctx.RequestStop(), "Quit");
                 }),
             new Hex1bAppOptions());
 
+        _requestModelDialogFocus = () =>
+        {
+            app.RequestFocus(node => string.Equals(node.MetricName, ModelDialogListMetricName, StringComparison.Ordinal));
+            app.Invalidate();
+        };
+
         void HandleSessionManagerStateChanged()
         {
+            UpdateHostWindowTitle();
+
             if (_sessionManager.PendingApproval is not null)
             {
                 _state.FocusTarget = Hex1bFocusTarget.Approval;
@@ -92,6 +96,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
         }
 
         _sessionManager.StateChanged += HandleSessionManagerStateChanged;
+        UpdateHostWindowTitle();
 
         try
         {
@@ -99,13 +104,25 @@ public sealed class Hex1bApplicationShell : IApplicationShell
         }
         finally
         {
+            _requestModelDialogFocus = null;
+            Console.Title = originalWindowTitle;
             _sessionManager.StateChanged -= HandleSessionManagerStateChanged;
             await _terminalWidgetHandle.DisposeAsync();
             await _terminalWorkloadAdapter.DisposeAsync();
         }
     }
 
-    private Hex1b.Widgets.Hex1bWidget BuildLeftPane(Hex1b.RootContext root)
+    private Hex1b.Widgets.Hex1bWidget BuildApplicationContent<TParent>(Hex1b.WidgetContext<TParent> context)
+        where TParent : Hex1b.Widgets.Hex1bWidget
+    {
+        return context.HSplitter(
+            BuildLeftPane(context),
+            BuildAgentPanel(context),
+            _state.TerminalPaneWidth);
+    }
+
+    private Hex1b.Widgets.Hex1bWidget BuildLeftPane<TParent>(Hex1b.WidgetContext<TParent> root)
+        where TParent : Hex1b.Widgets.Hex1bWidget
     {
         return root.VStack(_ =>
         [
@@ -129,7 +146,8 @@ public sealed class Hex1bApplicationShell : IApplicationShell
         }.Title("Terminal");
     }
 
-    private Hex1b.Widgets.Hex1bWidget BuildTerminalDragBar(Hex1b.RootContext root)
+    private Hex1b.Widgets.Hex1bWidget BuildTerminalDragBar<TParent>(Hex1b.WidgetContext<TParent> root)
+        where TParent : Hex1b.Widgets.Hex1bWidget
     {
         return root.DragBarPanel(new Hex1b.Widgets.TextBlockWidget("⇆ Drag split"))
             .InitialSize(_state.TerminalPaneWidth)
@@ -138,7 +156,8 @@ public sealed class Hex1bApplicationShell : IApplicationShell
             .HandleEdge(Hex1b.Widgets.DragBarEdge.Right);
     }
 
-    private Hex1b.Widgets.Hex1bWidget BuildAgentPanel(Hex1b.RootContext root)
+    private Hex1b.Widgets.Hex1bWidget BuildAgentPanel<TParent>(Hex1b.WidgetContext<TParent> root)
+        where TParent : Hex1b.Widgets.Hex1bWidget
     {
         var sessionItems = _sessionManager.SavedSessions
             .Select(AgentShellTextFormatter.FormatSession)
@@ -168,12 +187,10 @@ public sealed class Hex1bApplicationShell : IApplicationShell
                 })
                 .WithInputBindings(bindings =>
                 {
-                    bindings.Key(Hex1bKey.Y).Action(async () => await ResolveApprovalAsync(approved: true), "Approve command");
-                    bindings.Key(Hex1bKey.N).Action(async () => await ResolveApprovalAsync(approved: false), "Deny command");
-                    bindings.Character(text => MatchesApprovalInput(text, 'y'))
-                        .Action(async (text, ctx) => await ResolveApprovalAsync(approved: true), "Approve command");
-                    bindings.Character(text => MatchesApprovalInput(text, 'n'))
-                        .Action(async (text, ctx) => await ResolveApprovalAsync(approved: false), "Deny command");
+                    Hex1bShellInputBindings.ConfigureApprovalBindings(
+                        bindings,
+                        () => ResolveApprovalAsync(approved: true),
+                        () => ResolveApprovalAsync(approved: false));
                 })))
             {
                 HeightHint = SizeHint.Content,
@@ -200,16 +217,9 @@ public sealed class Hex1bApplicationShell : IApplicationShell
                 _state.FocusTarget = Hex1bFocusTarget.Prompt;
                 _state.PromptText = args.NewText;
             })
-            .OnSubmit(async args =>
-            {
-                _state.FocusTarget = Hex1bFocusTarget.Prompt;
-                await SendPromptAsync(args.Text);
-            })
             .WithInputBindings(bindings =>
             {
-                bindings.Remove(Hex1bKey.Enter, Hex1bModifiers.None);
-                bindings.Key(Hex1bKey.Enter).Action(async () => await SendPromptAsync(_state.PromptText), "Send prompt");
-                bindings.Ctrl().Key(Hex1bKey.Enter).Triggers(Hex1b.Widgets.TextBoxWidget.InsertNewline);
+                Hex1bShellInputBindings.ConfigurePromptBindings(bindings, () => SendPromptAsync(_state.PromptText));
             });
 
         var sessionList = new Hex1b.Widgets.ListWidget(sessionItems)
@@ -221,19 +231,27 @@ public sealed class Hex1bApplicationShell : IApplicationShell
         .OnSelectionChanged(HandleSessionSelectionChanged)
         .OnItemActivated(async args => await OpenSessionAsync(args.ActivatedIndex));
 
+        Hex1b.Widgets.Hex1bWidget conversationHistory = new Hex1b.Widgets.ScrollPanelWidget(
+            new Hex1b.Widgets.TextBlockWidget(AgentShellTextFormatter.FormatConversation(_sessionManager.Messages))
+            {
+                HeightHint = SizeHint.Fill,
+                WidthHint = SizeHint.Fill
+            },
+            Hex1b.Widgets.ScrollOrientation.Vertical,
+            true)
+        {
+            HeightHint = SizeHint.Fill,
+            WidthHint = SizeHint.Fill
+        }
+        .Follow();
+
         return new Hex1b.Widgets.BorderWidget(
             root.VStack(_ =>
             [
                 new Hex1b.Widgets.TextBlockWidget(AgentShellTextFormatter.BuildSessionSummary()) { HeightHint = SizeHint.Content },
                 sessionList,
                 new Hex1b.Widgets.TextBlockWidget(string.Empty) { HeightHint = SizeHint.Content },
-                new Hex1b.Widgets.ScrollPanelWidget(
-                    new Hex1b.Widgets.TextBlockWidget(AgentShellTextFormatter.FormatConversation(_sessionManager.Messages)),
-                    Hex1b.Widgets.ScrollOrientation.Vertical,
-                    true)
-                {
-                    HeightHint = SizeHint.Fill
-                },
+                conversationHistory,
                 new Hex1b.Widgets.TextBlockWidget(string.Empty) { HeightHint = SizeHint.Content },
                 approvalWidget,
                 new Hex1b.Widgets.BorderWidget(promptEditor)
@@ -271,6 +289,122 @@ public sealed class Hex1bApplicationShell : IApplicationShell
             Hex1bFocusTarget.Sessions => string.Equals(node.MetricName, SessionsMetricName, StringComparison.Ordinal),
             _ => string.Equals(node.MetricName, TerminalMetricName, StringComparison.Ordinal)
         });
+    }
+
+    private void OpenModelDialog(WindowManager windows)
+    {
+        _modelDialogWindow ??= windows.Window(w => BuildModelDialog(w))
+            .Title("Change model")
+            .Size(76, 18)
+            .Modal()
+            .OnClose(() => _state.IsModelDialogOpen = false)
+            .OnActivated(() => _requestModelDialogFocus?.Invoke());
+
+        if (_modelDialogWindow is null)
+        {
+            return;
+        }
+
+        SyncSelectedModelIndex();
+        _state.IsModelDialogOpen = true;
+        windows.Open(_modelDialogWindow);
+        _requestModelDialogFocus?.Invoke();
+    }
+
+    private Hex1b.Widgets.Hex1bWidget BuildModelDialog(Hex1b.WindowContentContext<Hex1b.Widgets.Hex1bWidget> context)
+    {
+        var models = _sessionManager.AvailableModels;
+        var modelItems = models
+            .Select(model => AgentShellTextFormatter.FormatModelOption(
+                model,
+                string.Equals(model.Id, _sessionManager.ActiveModelId, StringComparison.Ordinal)))
+            .ToArray();
+
+        if (modelItems.Length == 0)
+        {
+            return context.VStack(_ =>
+            [
+                new Hex1b.Widgets.TextBlockWidget("No models are available for the current Copilot session.") { HeightHint = SizeHint.Content },
+                new Hex1b.Widgets.TextBlockWidget(string.Empty) { HeightHint = SizeHint.Content },
+                _.HStack(h =>
+                [
+                    h.Button("Close").OnClick(_ => context.Window.Cancel())
+                ])
+            ]);
+        }
+
+        return context.VStack(_ =>
+        [
+            new Hex1b.Widgets.TextBlockWidget("Select a Copilot model for this session.") { HeightHint = SizeHint.Content },
+            new Hex1b.Widgets.TextBlockWidget("The active model is marked with ●.") { HeightHint = SizeHint.Content },
+            new Hex1b.Widgets.TextBlockWidget(string.Empty) { HeightHint = SizeHint.Content },
+            new Hex1b.Widgets.ListWidget(modelItems)
+            {
+                InitialSelectedIndex = Math.Clamp(_state.SelectedModelIndex, 0, Math.Max(0, modelItems.Length - 1)),
+                HeightHint = SizeHint.Fill,
+                WidthHint = SizeHint.Fill,
+                MetricName = ModelDialogListMetricName
+            }
+            .OnSelectionChanged(args => _state.SelectedModelIndex = args.SelectedIndex)
+            .OnItemActivated(async args => await ChangeModelFromDialogAsync(context.Window, args.ActivatedIndex, args.CancellationToken)),
+            new Hex1b.Widgets.TextBlockWidget(string.Empty) { HeightHint = SizeHint.Content },
+            _.HStack(h =>
+            [
+                h.Button("Apply").OnClick(async args => await ChangeModelFromDialogAsync(context.Window, _state.SelectedModelIndex, args.CancellationToken)),
+                h.Button("Cancel").OnClick(_ => context.Window.Cancel())
+            ])
+        ]);
+    }
+
+    private async Task ChangeModelFromDialogAsync(WindowHandle dialogWindow, int selectedIndex, CancellationToken cancellationToken)
+    {
+        var models = _sessionManager.AvailableModels;
+        if (selectedIndex < 0 || selectedIndex >= models.Count)
+        {
+            return;
+        }
+
+        _state.SelectedModelIndex = selectedIndex;
+        var changed = await _sessionManager.ChangeModelAsync(models[selectedIndex].Id, cancellationToken);
+        if (changed)
+        {
+            dialogWindow.Cancel();
+        }
+    }
+
+    private void SyncSelectedModelIndex()
+    {
+        var models = _sessionManager.AvailableModels;
+        if (models.Count == 0)
+        {
+            _state.SelectedModelIndex = 0;
+            return;
+        }
+
+        var activeModelIndex = models
+            .Select((model, index) => new { model.Id, index })
+            .FirstOrDefault(item => string.Equals(item.Id, _sessionManager.ActiveModelId, StringComparison.Ordinal))?.index;
+
+        _state.SelectedModelIndex = activeModelIndex ?? Math.Clamp(_state.SelectedModelIndex, 0, models.Count - 1);
+    }
+
+    private void UpdateHostWindowTitle()
+    {
+        Console.Title = AgentShellTextFormatter.BuildHostWindowTitle(_sessionManager);
+    }
+
+    private void ConfigureGlobalBindings(InputBindingsBuilder bindings)
+    {
+        Hex1bShellInputBindings.ConfigureGlobalBindings(
+            bindings,
+            ctx => FocusWidget(ctx, Hex1bFocusTarget.Terminal),
+            ctx => FocusWidget(ctx, Hex1bFocusTarget.Prompt),
+            ctx => FocusWidget(ctx, Hex1bFocusTarget.Sessions),
+            ctx => OpenModelDialog(ctx.Windows),
+            () => _sessionManager.CreateNewSessionAsync(),
+            () => _state.TerminalPaneWidth = Math.Max(MinimumTerminalPaneWidth, _state.TerminalPaneWidth - 5),
+            () => _state.TerminalPaneWidth = Math.Min(MaximumTerminalPaneWidth, _state.TerminalPaneWidth + 5),
+            ctx => ctx.RequestStop());
     }
 
     private async Task SendPromptAsync(string prompt)

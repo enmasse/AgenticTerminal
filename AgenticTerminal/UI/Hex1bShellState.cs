@@ -8,5 +8,9 @@ public sealed class Hex1bShellState
 
     public int SelectedSessionIndex { get; set; }
 
+    public int SelectedModelIndex { get; set; }
+
+    public bool IsModelDialogOpen { get; set; }
+
     public Hex1bFocusTarget FocusTarget { get; set; } = Hex1bFocusTarget.Terminal;
 }

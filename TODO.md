@@ -4,7 +4,8 @@
 - Broaden the VT parser and terminal surface so more full-screen terminal apps render correctly, including richer ANSI styling, alternate screen buffers, mouse reporting, and additional cursor modes.
 - Persist the shell session when possible, or snapshot and restore enough shell state to approximate continuation between launches.
 - Improve startup and auth UX so GitHub login failures or Copilot CLI issues are surfaced inside the TUI instead of only on stderr.
-- Add keyboard shortcuts for prompt submit, session navigation, and approval actions without conflicting with terminal key passthrough.
+- Investigate and fix dead-key composition in Hex1b input translation so US-International and similar layouts work in both the prompt and the embedded terminal.
+- Add canonical focus traversal and dialog cancellation keys such as `Tab`, `Shift+Tab`, and `Esc` around the current function-key command model.
 - Add prompt history navigation and editable drafts per session.
 
 ## Full implementation roadmap
@@ -23,3 +24,4 @@
 13. Add telemetry hooks and structured logging around Copilot connection state and shell execution.
 14. Add packaging for a self-contained Windows distribution with first-run checks for Copilot CLI prerequisites.
 15. Add end-to-end tests for persistence, approval flow, ConPTY startup, and interactive terminal behavior in a headless harness.
+16. Evaluate whether AgenticTerminal should wrap a custom Hex1b presentation adapter locally or contribute an upstream Hex1b fix for composed keyboard input.

@@ -7,10 +7,12 @@ AgenticTerminal is a .NET 10 terminal application that combines a Hex1b-based te
 - Split terminal and agent interface built with Hex1b
 - Interactive PTY-backed terminal session for local shell interaction
 - Copilot-powered agent session management using `GitHub.Copilot.SDK`
+- Terminal-safe application shortcuts using function keys for global actions
 - Approval flow for shell commands proposed by the agent
+- In-app model picker with per-model token multiplier display and remaining Copilot quota in the host window title
 - Conversation persistence for saved sessions
 - Smoke test mode for scripted startup validation
-- Automated tests for terminal capture, PTY integration, startup behavior, and UI formatting
+- Automated tests for terminal capture, PTY integration, startup behavior, UI formatting, shortcut routing, and isolated dead-key repro harnesses
 
 ## Project structure
 
@@ -37,6 +39,23 @@ From the repository root:
 - `dotnet run --project AgenticTerminal/AgenticTerminal.csproj`
 
 The application starts a terminal session, initializes a Copilot client using the current working directory, and opens the Hex1b shell UI.
+
+## Keyboard shortcuts
+
+Application-global shortcuts are mapped to terminal-safe function keys to reduce conflicts with shells and applications running inside the embedded terminal:
+
+- `F2` - create a new session
+- `F4` - open the model picker
+- `F7` - focus the terminal pane
+- `F8` - focus the prompt pane
+- `F9` - focus the sessions list
+- `F10` - quit the application
+- `Ctrl+Left` / `Ctrl+Right` - resize the terminal split
+
+Prompt editing:
+
+- `Enter` - send the prompt
+- `Shift+Enter` - insert a newline
 
 ## Command-line options
 
@@ -72,8 +91,11 @@ The test project includes:
 - startup option and smoke test coverage
 - persistence tests
 - UI formatting and shell behavior tests
+- runtime interaction tests for function-key shortcuts and prompt key behavior
+- an isolated dead-key repro harness for diagnosing composed-input behavior
 
 ## Notes
 
 - Build output and generated restore artifacts are ignored through `.gitignore` and should not be committed.
 - The test host exists only to support PTY integration testing and is not part of the end-user application.
+- Dead keys currently appear to be lost upstream of this application in the Hex1b input translation path. This affects both the prompt and the embedded terminal when using layouts such as US-International.

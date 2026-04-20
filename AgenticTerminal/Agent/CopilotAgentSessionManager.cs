@@ -4,6 +4,7 @@ using AgenticTerminal.Approvals;
 using AgenticTerminal.Persistence;
 using AgenticTerminal.Terminal;
 using GitHub.Copilot.SDK;
+using GitHub.Copilot.SDK.Rpc;
 using Microsoft.Extensions.AI;
 
 namespace AgenticTerminal.Agent;
@@ -17,7 +18,6 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
     private readonly ConversationTranscript _transcript = new();
     private readonly ITerminalSession _terminalSession;
     private readonly string _workingDirectory;
-    private readonly string? _preferredModel;
     private readonly object _promptSyncRoot = new();
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private CopilotClient? _client;
@@ -28,6 +28,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
     private DateTimeOffset _createdAt;
     private string? _activeSessionId;
     private string _activeTitle = "New session";
+    private string? _preferredModel;
 
     public CopilotAgentSessionManager(
         ApprovalQueue approvalQueue,
@@ -50,6 +51,8 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
 
     public IReadOnlyList<ConversationSessionSummary> SavedSessions { get; private set; } = [];
 
+    public IReadOnlyList<ModelInfo> AvailableModels { get; private set; } = [];
+
     public ApprovalRequest? PendingApproval => _approvalQueue.Current;
 
     public bool IsBusy { get; private set; }
@@ -57,6 +60,10 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
     public string StatusText { get; private set; } = "Starting...";
 
     public string? ActiveSessionId => _activeSessionId;
+
+    public string? ActiveModelId { get; private set; }
+
+    public double? RemainingQuotaPercentage { get; private set; }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -95,6 +102,48 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         }
     }
 
+    public async Task<bool> ChangeModelAsync(string modelId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelId);
+
+        await _sessionLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_session is null)
+            {
+                StatusText = "The Copilot session has not been initialized.";
+                OnStateChanged();
+                return false;
+            }
+
+            if (IsBusy)
+            {
+                StatusText = "Wait for the current response to finish before changing the model.";
+                OnStateChanged();
+                return false;
+            }
+
+            try
+            {
+                var result = await _session.Rpc.Model.SwitchToAsync(modelId, cancellationToken: cancellationToken);
+                _preferredModel = result.ModelId;
+                await RefreshModelStateAsync(cancellationToken);
+                StatusText = $"Model changed to {GetActiveModelDisplayName()}.";
+                OnStateChanged();
+                return true;
+            }
+            catch (Exception exception)
+            {
+                StatusText = exception.Message;
+                OnStateChanged();
+                return false;
+            }
+        }
+        finally
+        {
+            _sessionLock.Release();
+        }
+    }
     public async Task CreateNewSessionAsync(CancellationToken cancellationToken = default)
     {
         await _sessionLock.WaitAsync(cancellationToken);
@@ -186,11 +235,13 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         catch (Exception exception) when (!string.IsNullOrWhiteSpace(_preferredModel) && CopilotModelFallbackPolicy.ShouldFallbackToDefaultModel(exception))
         {
             StatusText = $"Model '{_preferredModel}' is unavailable. Falling back to Copilot default model.";
+            _preferredModel = null;
             OnStateChanged();
             _session = await _client.CreateSessionAsync(CreateSessionConfig(existingMessages, preferredModel: null));
         }
 
         _sessionSubscription = _session.On(HandleSessionEvent);
+        await RefreshModelStateAsync(cancellationToken);
         StatusText = "Ready";
         OnStateChanged();
     }
@@ -444,6 +495,79 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         }
 
         return sessionConfig;
+    }
+
+    private async Task RefreshModelStateAsync(CancellationToken cancellationToken)
+    {
+        if (_client is null || _session is null)
+        {
+            AvailableModels = [];
+            ActiveModelId = _preferredModel;
+            RemainingQuotaPercentage = null;
+            return;
+        }
+
+        var models = await _client.ListModelsAsync(cancellationToken);
+        AvailableModels = models
+            .Where(model => !string.Equals(model.Policy?.State, "disabled", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(model => string.IsNullOrWhiteSpace(model.Name) ? model.Id : model.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var currentModel = await _session.Rpc.Model.GetCurrentAsync(cancellationToken);
+        ActiveModelId = currentModel.ModelId;
+        if (!string.IsNullOrWhiteSpace(ActiveModelId))
+        {
+            _preferredModel = ActiveModelId;
+        }
+
+        var quota = await _client.Rpc.Account.GetQuotaAsync(cancellationToken);
+        RemainingQuotaPercentage = ResolveRemainingQuotaPercentage(quota);
+    }
+
+    private static double? ResolveRemainingQuotaPercentage(AccountGetQuotaResult quota)
+    {
+        ArgumentNullException.ThrowIfNull(quota);
+
+        if (TryGetRemainingPercentage(quota, "premium_interactions", out var remainingPercentage)
+            || TryGetRemainingPercentage(quota, "chat", out remainingPercentage)
+            || TryGetRemainingPercentage(quota, "completions", out remainingPercentage))
+        {
+            return remainingPercentage;
+        }
+
+        return quota.QuotaSnapshots
+            .Select(snapshot => (double?)snapshot.Value.RemainingPercentage)
+            .FirstOrDefault();
+    }
+
+    private static bool TryGetRemainingPercentage(AccountGetQuotaResult quota, string quotaName, out double remainingPercentage)
+    {
+        if (quota.QuotaSnapshots.TryGetValue(quotaName, out var snapshot))
+        {
+            remainingPercentage = snapshot.RemainingPercentage;
+            return true;
+        }
+
+        remainingPercentage = default;
+        return false;
+    }
+
+    private ModelInfo? ResolveActiveModel()
+    {
+        if (string.IsNullOrWhiteSpace(ActiveModelId))
+        {
+            return null;
+        }
+
+        return AvailableModels.FirstOrDefault(model => string.Equals(model.Id, ActiveModelId, StringComparison.Ordinal));
+    }
+
+    private string GetActiveModelDisplayName()
+    {
+        var activeModel = ResolveActiveModel();
+        return string.IsNullOrWhiteSpace(activeModel?.Name)
+            ? ActiveModelId ?? "Copilot default"
+            : activeModel.Name;
     }
 
     private int CountAssistantMessages()

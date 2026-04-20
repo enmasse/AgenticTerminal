@@ -2,6 +2,7 @@ using System.Text;
 using AgenticTerminal.Agent;
 using AgenticTerminal.Approvals;
 using AgenticTerminal.Persistence;
+using GitHub.Copilot.SDK;
 
 namespace AgenticTerminal.UI;
 
@@ -34,7 +35,7 @@ public static class AgentShellTextFormatter
         var builder = new StringBuilder();
         builder.AppendLine("Sessions");
         builder.AppendLine("Enter = open session");
-        builder.AppendLine("Ctrl-N = new session");
+        builder.AppendLine("F2 = new session");
         return builder.ToString().TrimEnd();
     }
 
@@ -58,11 +59,14 @@ public static class AgentShellTextFormatter
             Hex1bFocusTarget.Sessions => "sessions",
             _ => "terminal"
         });
-        builder.AppendLine(" · Ctrl-T terminal · Ctrl-P prompt/approval · Ctrl-S sessions");
+        builder.AppendLine(" · F7 terminal · F8 prompt/approval · F9 sessions · F4 models");
+
+        builder.Append("Model: ");
+        builder.AppendLine(BuildModelSummary(manager));
 
         var approval = manager.PendingApproval;
         builder.AppendLine(approval is null
-            ? "Prompt: Enter send · Ctrl-Enter new line"
+            ? "Prompt: Enter send · Shift-Enter new line"
             : "Prompt: locked while approval is waiting");
 
         if (approval is null)
@@ -75,8 +79,74 @@ public static class AgentShellTextFormatter
             builder.AppendLine("Approval: focus the approval box and press Y or N");
         }
 
-        builder.Append("App: Ctrl-N new session · Ctrl-Q quit");
+        builder.Append("App: F2 new session · F4 change model · F10 quit");
         return builder.ToString();
+    }
+
+    public static string BuildModelMenuTitle(CopilotAgentSessionManager manager)
+    {
+        ArgumentNullException.ThrowIfNull(manager);
+        return $"Model: {BuildModelSummary(manager)}";
+    }
+
+    public static string BuildHostWindowTitle(CopilotAgentSessionManager manager)
+    {
+        ArgumentNullException.ThrowIfNull(manager);
+        return $"AgenticTerminal - {BuildModelSummary(manager)}";
+    }
+
+    public static string FormatModelOption(ModelInfo model, bool isActive)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
+        var builder = new StringBuilder();
+        if (isActive)
+        {
+            builder.Append("● ");
+        }
+        else
+        {
+            builder.Append("  ");
+        }
+
+        builder.Append(string.IsNullOrWhiteSpace(model.Name) ? model.Id : model.Name);
+
+        if (!string.IsNullOrWhiteSpace(model.Name) && !string.Equals(model.Name, model.Id, StringComparison.Ordinal))
+        {
+            builder.Append(" (");
+            builder.Append(model.Id);
+            builder.Append(')');
+        }
+
+        builder.Append(" · ");
+        builder.Append(FormatTokenMultiplier(model.Billing?.Multiplier));
+        return builder.ToString();
+    }
+
+    public static string BuildModelSummary(CopilotAgentSessionManager manager)
+    {
+        ArgumentNullException.ThrowIfNull(manager);
+
+        var activeModel = manager.AvailableModels.FirstOrDefault(model => string.Equals(model.Id, manager.ActiveModelId, StringComparison.Ordinal));
+        var modelName = string.IsNullOrWhiteSpace(activeModel?.Name)
+            ? manager.ActiveModelId ?? "Copilot default"
+            : activeModel.Name;
+
+        return $"{modelName} · {FormatRemainingQuota(manager.RemainingQuotaPercentage)}";
+    }
+
+    private static string FormatRemainingQuota(double? remainingQuotaPercentage)
+    {
+        return remainingQuotaPercentage is >= 0
+            ? $"{remainingQuotaPercentage.Value:0.#}% left"
+            : "quota unknown";
+    }
+
+    private static string FormatTokenMultiplier(double? multiplier)
+    {
+        return multiplier is > 0
+            ? $"{multiplier.Value:0.##}×"
+            : "multiplier unknown";
     }
 
     public static string BuildPromptLine(string promptText, bool isFocused)

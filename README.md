@@ -31,6 +31,7 @@ AgenticTerminal is a .NET 10 terminal application that combines a Hex1b-based te
 - .NET SDK 10
 - Windows with `pwsh.exe` available on `PATH` for the normal interactive application path
 - A signed-in GitHub Copilot environment for agent functionality
+- Access to `https://nuget.pkg.github.com/enmasse/index.json` for the `Hex1b` package (configure a GitHub Packages token if your environment does not already have credentials)
 
 ## Running the application
 

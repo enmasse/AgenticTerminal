@@ -10,6 +10,7 @@ public sealed class Hex1bShellInputBindingsTests
     [InlineData(Hex1bKey.F7, Hex1bModifiers.None, "Focus terminal")]
     [InlineData(Hex1bKey.F8, Hex1bModifiers.None, "Focus prompt")]
     [InlineData(Hex1bKey.F9, Hex1bModifiers.None, "Focus sessions")]
+    [InlineData(Hex1bKey.F6, Hex1bModifiers.None, "Toggle debug panel")]
     [InlineData(Hex1bKey.F4, Hex1bModifiers.None, "Change model")]
     [InlineData(Hex1bKey.F2, Hex1bModifiers.None, "New session")]
     [InlineData(Hex1bKey.LeftArrow, Hex1bModifiers.Control, "Shrink terminal pane")]
@@ -24,6 +25,7 @@ public sealed class Hex1bShellInputBindingsTests
             _ => { },
             _ => { },
             _ => { },
+            () => { },
             _ => { },
             () => Task.CompletedTask,
             () => { },

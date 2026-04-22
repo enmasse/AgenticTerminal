@@ -200,6 +200,7 @@ public sealed class Hex1bInteractionAutomationTests
                 ctx => ctx.FocusWhere(node => string.Equals(node.MetricName, PromptMetricName, StringComparison.Ordinal)),
                 ctx => ctx.FocusWhere(node => string.Equals(node.MetricName, PromptMetricName, StringComparison.Ordinal)),
                 ctx => ctx.FocusWhere(node => string.Equals(node.MetricName, DialogListMetricName, StringComparison.Ordinal)),
+                () => { },
                 ctx => OpenModelDialog(),
                 () => Task.CompletedTask,
                 () => { },

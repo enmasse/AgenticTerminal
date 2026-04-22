@@ -2,11 +2,11 @@ namespace AgenticTerminal.Startup;
 
 public static class AppCommandLineOptionsParser
 {
-    public static AppCommandLineOptions Parse(string[] args)
+    public static AppCommandLineOptions Parse(string[] args, AppCommandLineOptions? defaults = null)
     {
         ArgumentNullException.ThrowIfNull(args);
 
-        var options = AppCommandLineOptions.Interactive;
+        var options = defaults ?? AppCommandLineOptions.Interactive;
 
         for (var index = 0; index < args.Length; index++)
         {

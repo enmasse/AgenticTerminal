@@ -40,7 +40,7 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
             "$__agenticterminal_exit = 0;",
             "try { & ([ScriptBlock]::Create($__agenticterminal_command)); if ($LASTEXITCODE -is [int]) { $__agenticterminal_exit = $LASTEXITCODE } }",
             "catch { $__agenticterminal_exit = 1; Write-Host $_; }",
-            "finally { Write-Host '" + TerminalCommandCapture.CompletionMarkerPrefix + ":" + commandId + ":' + $__agenticterminal_exit }");
+            "finally { Write-Host ('" + TerminalCommandCapture.CompletionMarkerPrefix + ":" + commandId + ":' + $__agenticterminal_exit) }");
     }
 
     public Hex1bPtyTerminalSession(TerminalSessionStartupOptions? startupOptions = null)

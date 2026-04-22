@@ -23,6 +23,20 @@ public sealed class Hex1bPtyTerminalSessionTests
     }
 
     [Fact]
+    public void BuildWrappedCommandScript_EmitsComputedCompletionMarker()
+    {
+        var method = typeof(Hex1bPtyTerminalSession).GetMethod(
+            "BuildWrappedCommandScript",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(method);
+
+        var script = (string)method!.Invoke(null, ["Get-ChildItem", "abc123"])!;
+
+        Assert.Contains("Write-Host ('__AGENTICTERMINAL_DONE__:abc123:' + $__agenticterminal_exit)", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SendTextAsync_ForwardsTypedInputToFakeShell()
     {
         KillLingeringTestHostProcesses();
@@ -116,6 +130,36 @@ public sealed class Hex1bPtyTerminalSessionTests
             Assert.Contains("COMMAND:Get-ChildItem -Force", result.Output, StringComparison.Ordinal);
             Assert.Contains("OUTPUT:GET-CHILDITEM -FORCE", result.Output, StringComparison.Ordinal);
             Assert.DoesNotContain("$__agenticterminal_command", result.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await DisposeSessionAsync(session);
+            KillLingeringTestHostProcesses();
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteCommandAsync_WithSequentialCommands_RunsBothCommands()
+    {
+        KillLingeringTestHostProcesses();
+        var output = new ConcurrentQueue<string>();
+        var session = CreateSession();
+        using var subscription = Subscribe(session, output);
+
+        try
+        {
+            using var cancellationTokenSource = new CancellationTokenSource(TestTimeout);
+
+            await session.StartAsync(cancellationTokenSource.Token);
+            await WaitForOutputAsync(output, "$", cancellationTokenSource.Token);
+
+            var firstResult = await session.ExecuteCommandAsync("Get-Process", cancellationTokenSource.Token)
+                .WaitAsync(cancellationTokenSource.Token);
+            var secondResult = await session.ExecuteCommandAsync("Get-Service", cancellationTokenSource.Token)
+                .WaitAsync(cancellationTokenSource.Token);
+
+            Assert.Contains("COMMAND:Get-Process", firstResult.Output, StringComparison.Ordinal);
+            Assert.Contains("COMMAND:Get-Service", secondResult.Output, StringComparison.Ordinal);
         }
         finally
         {

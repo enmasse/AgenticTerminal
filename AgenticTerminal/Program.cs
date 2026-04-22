@@ -5,11 +5,18 @@ using AgenticTerminal.Startup;
 using AgenticTerminal.Terminal;
 using AgenticTerminal.UI;
 AppCommandLineOptions options;
+AppConfiguration configuration;
 try
 {
-    options = AppCommandLineOptionsParser.Parse(args);
+    configuration = AppConfigurationLoader.Load(AppConfigurationLoader.GetDefaultConfigurationPath());
+    options = AppCommandLineOptionsParser.Parse(args, AppCommandLineOptions.Interactive.ApplyConfiguration(configuration));
 }
 catch (ArgumentException exception)
+{
+    Console.Error.WriteLine(exception.Message);
+    return;
+}
+catch (InvalidOperationException exception)
 {
     Console.Error.WriteLine(exception.Message);
     return;
@@ -37,7 +44,10 @@ await using var sessionManager = new CopilotAgentSessionManager(
     conversationSessionStore,
     terminalSession,
     Environment.CurrentDirectory,
-    options.CopilotModel);
+    options.CopilotModel,
+    new CopilotSessionOptions(configuration.FirstTokenTimeoutSeconds is > 0
+        ? TimeSpan.FromSeconds(configuration.FirstTokenTimeoutSeconds.Value)
+        : null));
 
 try
 {
@@ -74,5 +84,8 @@ if (options.RunSmokeTest)
     return;
 }
 
-var applicationShell = ApplicationShellFactory.Create(sessionManager, terminalSession);
+var applicationShell = ApplicationShellFactory.Create(
+    sessionManager,
+    terminalSession,
+    new ApplicationShellOptions(configuration.ShowDebugPanelByDefault ?? false));
 await applicationShell.RunAsync(startupCancellationToken);

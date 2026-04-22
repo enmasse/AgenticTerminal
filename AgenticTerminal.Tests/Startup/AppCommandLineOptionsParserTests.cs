@@ -31,4 +31,24 @@ public sealed class AppCommandLineOptionsParserTests
 
         Assert.Contains("--smoke-test", exception.Message);
     }
+
+    [Fact]
+    public void Parse_WithConfigurationDefaults_UsesConfiguredModel()
+    {
+        var defaults = AppCommandLineOptions.Interactive.ApplyConfiguration(new AppConfiguration("gpt-5"));
+
+        var options = AppCommandLineOptionsParser.Parse([], defaults);
+
+        Assert.Equal("gpt-5", options.CopilotModel);
+    }
+
+    [Fact]
+    public void Parse_WithCommandLineModel_OverridesConfiguredModel()
+    {
+        var defaults = AppCommandLineOptions.Interactive.ApplyConfiguration(new AppConfiguration("gpt-5"));
+
+        var options = AppCommandLineOptionsParser.Parse(["--model", "claude-sonnet-4.5"], defaults);
+
+        Assert.Equal("claude-sonnet-4.5", options.CopilotModel);
+    }
 }

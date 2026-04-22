@@ -71,8 +71,8 @@ static async Task WritePromptAsync()
 static bool TryHandleWrappedCommand(string line, out string decodedCommand, out string completionMarker)
 {
     const string base64Prefix = "FromBase64String('";
-    const string markerPrefix = "Write-Host '";
-    const string markerSuffix = "' + $__agenticterminal_exit";
+    const string markerPrefix = "Write-Host ('";
+    const string markerSuffix = "' + $__agenticterminal_exit)";
 
     decodedCommand = string.Empty;
     completionMarker = string.Empty;

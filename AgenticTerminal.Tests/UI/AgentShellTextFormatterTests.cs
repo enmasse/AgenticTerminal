@@ -26,6 +26,7 @@ public sealed class AgentShellTextFormatterTests
     [Theory]
     [InlineData(Hex1bFocusTarget.Terminal, "Focus: terminal")]
     [InlineData(Hex1bFocusTarget.Approval, "Focus: approval")]
+    [InlineData(Hex1bFocusTarget.UserInput, "Focus: user input")]
     [InlineData(Hex1bFocusTarget.Prompt, "Focus: prompt")]
     [InlineData(Hex1bFocusTarget.Sessions, "Focus: sessions")]
     public void BuildStatusText_ReflectsFocusTarget(Hex1bFocusTarget focusTarget, string expected)
@@ -35,6 +36,91 @@ public sealed class AgentShellTextFormatterTests
         var statusText = AgentShellTextFormatter.BuildStatusText(manager, focusTarget);
 
         Assert.Contains(expected, statusText);
+    }
+
+    [Fact]
+    public void BuildStatusText_IncludesPromptLatencyMeasurements()
+    {
+        var manager = CreateManager();
+        SetLatestPromptTiming(manager, new AgentPromptTimingState(
+            DateTimeOffset.UtcNow,
+            TimeSpan.FromMilliseconds(15),
+            TimeSpan.FromMilliseconds(25),
+            TimeSpan.FromMilliseconds(35),
+            TimeSpan.FromMilliseconds(250),
+            TimeSpan.FromSeconds(1.5),
+            TimeSpan.FromMilliseconds(80),
+            "read_terminal_snapshot",
+            IsWaitingForFirstToken: false,
+            IsCompleted: true,
+            LastError: null));
+
+        var statusText = AgentShellTextFormatter.BuildStatusText(manager, Hex1bFocusTarget.Terminal);
+
+        Assert.Contains("Latency: persist 15 ms · snapshot 25 ms · send 35 ms", statusText);
+        Assert.Contains("Response: first token 250 ms · total 1.50 s", statusText);
+        Assert.Contains("Tool timing: read_terminal_snapshot · 80 ms", statusText);
+        Assert.Contains("Latency status: completed", statusText);
+    }
+
+    [Fact]
+    public void BuildPromptTimingText_UsesDefaultMessageWithoutMeasurements()
+    {
+        var manager = CreateManager();
+
+        var timingText = AgentShellTextFormatter.BuildPromptTimingText(manager);
+
+        Assert.Equal("Latency: no prompt measurements yet", timingText);
+    }
+
+    [Fact]
+    public void BuildPromptTimingText_ShowsSnapshotAsNotAvailableWhenNoAutomaticSnapshotWasMeasured()
+    {
+        var manager = CreateManager();
+        SetLatestPromptTiming(manager, new AgentPromptTimingState(
+            DateTimeOffset.UtcNow,
+            TimeSpan.FromMilliseconds(12),
+            SnapshotDuration: null,
+            TimeSpan.FromMilliseconds(40),
+            TimeSpan.FromMilliseconds(180),
+            TimeSpan.FromSeconds(0.9),
+            ActiveToolDuration: null,
+            LastToolName: null,
+            IsWaitingForFirstToken: false,
+            IsCompleted: true,
+            LastError: null));
+
+        var timingText = AgentShellTextFormatter.BuildPromptTimingText(manager);
+
+        Assert.Contains("Latency: persist 12 ms · snapshot n/a · send 40 ms", timingText);
+    }
+
+    [Fact]
+    public void BuildDebugPanelText_IncludesTimeoutAndInteractionState()
+    {
+        var manager = CreateManager();
+        SetLatestPromptTiming(manager, new AgentPromptTimingState(
+            DateTimeOffset.UtcNow,
+            TimeSpan.FromMilliseconds(10),
+            TimeSpan.FromMilliseconds(20),
+            TimeSpan.FromMilliseconds(30),
+            TimeSpan.FromMilliseconds(150),
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromMilliseconds(90),
+            "run_terminal_command",
+            IsWaitingForFirstToken: false,
+            IsCompleted: false,
+            LastError: null));
+
+        var approvalQueue = GetApprovalQueue(manager);
+        _ = approvalQueue.EnqueueShellCommandAsync("git status");
+
+        var debugText = AgentShellTextFormatter.BuildDebugPanelText(manager);
+
+        Assert.Contains("Debug · First-token timeout: 15.00 s", debugText);
+        Assert.Contains("Latency: persist 10 ms · snapshot 20 ms · send 30 ms", debugText);
+        Assert.Contains("Tool: none", debugText);
+        Assert.Contains("Debug · Interaction: approval pending", debugText);
     }
 
     private static CopilotAgentSessionManager CreateManager()
@@ -51,6 +137,13 @@ public sealed class AgentShellTextFormatterTests
         var field = typeof(CopilotAgentSessionManager)
             .GetField("_approvalQueue", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
         return (ApprovalQueue)field.GetValue(manager)!;
+    }
+
+    private static void SetLatestPromptTiming(CopilotAgentSessionManager manager, AgentPromptTimingState timing)
+    {
+        var property = typeof(CopilotAgentSessionManager)
+            .GetProperty(nameof(CopilotAgentSessionManager.LatestPromptTiming), System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)!;
+        property.SetValue(manager, timing);
     }
 
     private sealed class TestTerminalSession : ITerminalSession

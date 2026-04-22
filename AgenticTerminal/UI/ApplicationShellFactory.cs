@@ -5,11 +5,14 @@ namespace AgenticTerminal.UI;
 
 public static class ApplicationShellFactory
 {
-    public static IApplicationShell Create(CopilotAgentSessionManager sessionManager, ITerminalSession terminalSession)
+    public static IApplicationShell Create(
+        CopilotAgentSessionManager sessionManager,
+        ITerminalSession terminalSession,
+        ApplicationShellOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(sessionManager);
         ArgumentNullException.ThrowIfNull(terminalSession);
 
-        return new Hex1bApplicationShell(sessionManager, terminalSession);
+        return new Hex1bApplicationShell(sessionManager, terminalSession, options);
     }
 }

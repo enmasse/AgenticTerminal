@@ -9,6 +9,7 @@ internal static class Hex1bShellInputBindings
         Action<InputBindingActionContext> focusTerminal,
         Action<InputBindingActionContext> focusPrompt,
         Action<InputBindingActionContext> focusSessions,
+        Action toggleDebugPanel,
         Action<InputBindingActionContext> openModelDialog,
         Func<Task> createNewSessionAsync,
         Action shrinkTerminalPane,
@@ -18,6 +19,7 @@ internal static class Hex1bShellInputBindings
         bindings.Key(Hex1bKey.F7).Global().OverridesCapture().Action(focusTerminal, "Focus terminal");
         bindings.Key(Hex1bKey.F8).Global().OverridesCapture().Action(focusPrompt, "Focus prompt");
         bindings.Key(Hex1bKey.F9).Global().OverridesCapture().Action(focusSessions, "Focus sessions");
+        bindings.Key(Hex1bKey.F6).Global().OverridesCapture().Action(toggleDebugPanel, "Toggle debug panel");
         bindings.Key(Hex1bKey.F4).Global().OverridesCapture().Action(openModelDialog, "Change model");
         bindings.Key(Hex1bKey.F2).Global().OverridesCapture().Action(async () => await createNewSessionAsync(), "New session");
         bindings.Ctrl().Global().OverridesCapture().Key(Hex1bKey.LeftArrow).Action(shrinkTerminalPane, "Shrink terminal pane");
@@ -43,5 +45,21 @@ internal static class Hex1bShellInputBindings
         bindings.Remove(Hex1bKey.Enter, Hex1bModifiers.None);
         bindings.Key(Hex1bKey.Enter).Action(async () => await sendPromptAsync(), "Send prompt");
         bindings.Shift().Key(Hex1bKey.Enter).Triggers(Hex1b.Widgets.TextBoxWidget.InsertNewline);
+    }
+
+    public static void ConfigureUserInputBindings(
+        InputBindingsBuilder bindings,
+        bool allowMultiline,
+        Func<Task> submitAsync,
+        Func<Task> cancelAsync)
+    {
+        bindings.Remove(Hex1bKey.Enter, Hex1bModifiers.None);
+        bindings.Key(Hex1bKey.Enter).Action(async () => await submitAsync(), "Submit response");
+        if (allowMultiline)
+        {
+            bindings.Shift().Key(Hex1bKey.Enter).Triggers(Hex1b.Widgets.TextBoxWidget.InsertNewline);
+        }
+
+        bindings.Key(Hex1bKey.Escape).Action(async () => await cancelAsync(), "Cancel response");
     }
 }

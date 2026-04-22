@@ -27,4 +27,15 @@ public sealed class AppCommandLineOptionsModelTests
 
         Assert.Contains("--model", exception.Message);
     }
+
+    [Fact]
+    public void ApplyConfiguration_WithModel_PopulatesCommandLineDefaults()
+    {
+        var options = AppCommandLineOptions.Interactive.ApplyConfiguration(new AppConfiguration
+        {
+            CopilotModel = "gpt-5"
+        });
+
+        Assert.Equal("gpt-5", options.CopilotModel);
+    }
 }

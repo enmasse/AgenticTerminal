@@ -23,7 +23,7 @@ public sealed class Hex1bPtyTerminalSessionTests
     }
 
     [Fact]
-    public void BuildWrappedCommandScript_ConnectsToNamedPipeBackchannel()
+    public void BuildWrappedCommandScript_UsesStartupFunctionInvocation()
     {
         var method = typeof(Hex1bPtyTerminalSession).GetMethod(
             "BuildWrappedCommandScript",
@@ -33,9 +33,10 @@ public sealed class Hex1bPtyTerminalSessionTests
 
         var script = (string)method!.Invoke(null, ["Get-ChildItem", "abc123", "agenticterminal-test-pipe"])!;
 
-        Assert.Contains("NamedPipeClientStream", script, StringComparison.Ordinal);
+        Assert.StartsWith("__agenticterminal_invoke", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("NamedPipeClientStream", script, StringComparison.Ordinal);
         Assert.Contains("agenticterminal-test-pipe", script, StringComparison.Ordinal);
-        Assert.Contains("WriteLine('abc123:' + $__agenticterminal_exit)", script, StringComparison.Ordinal);
+        Assert.Contains("'abc123'", script, StringComparison.Ordinal);
     }
 
     [Fact]

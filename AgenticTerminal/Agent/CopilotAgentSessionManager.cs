@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Collections.ObjectModel;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using AgenticTerminal.Approvals;
@@ -14,6 +16,20 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
 {
     private static readonly TerminalSnapshotOptions SnapshotOptions = new(MaxLines: 12, MaxCharacters: 2000);
     private static readonly TimeSpan DefaultFirstTokenTimeoutDuration = TimeSpan.FromSeconds(15);
+    private static readonly string[] AllowedToolNames =
+    [
+        "powershell",
+        "run_terminal_command",
+        "read_wrapped_command_events",
+        "read_wrapped_command_buffer",
+        "read_terminal_snapshot",
+        "ask_user"
+    ];
+    private static readonly IReadOnlyDictionary<string, object?> ToolOverrideProperties = new ReadOnlyDictionary<string, object?>(
+        new Dictionary<string, object?>
+        {
+            ["is_override"] = true
+        });
 
     private readonly ApprovalQueue _approvalQueue;
     private readonly ConversationSessionStore _conversationSessionStore;
@@ -24,6 +40,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
     private readonly object _promptTimingSyncRoot = new();
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private readonly TimeSpan _firstTokenTimeout;
+    private readonly Func<string, CancellationToken, Task>? _preferredModelChanged;
     private AgentCommandBackchannelSession? _agentCommandBackchannelSession;
     private CopilotClient? _client;
     private CopilotSession? _session;
@@ -54,6 +71,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         _firstTokenTimeout = options?.FirstTokenTimeout is TimeSpan configuredTimeout && configuredTimeout > TimeSpan.Zero
             ? configuredTimeout
             : DefaultFirstTokenTimeoutDuration;
+        _preferredModelChanged = options?.PreferredModelChanged;
         _approvalQueue.Changed += HandleStateChanged;
     }
 
@@ -152,6 +170,20 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
                 var result = await _session.Rpc.Model.SwitchToAsync(modelId, cancellationToken: cancellationToken);
                 _preferredModel = result.ModelId;
                 await RefreshModelStateAsync(cancellationToken);
+                if (_preferredModelChanged is not null)
+                {
+                    try
+                    {
+                        await _preferredModelChanged(result.ModelId, cancellationToken);
+                    }
+                    catch (Exception exception)
+                    {
+                        StatusText = $"Model changed to {GetActiveModelDisplayName()}, but the default could not be saved: {exception.Message}";
+                        OnStateChanged();
+                        return true;
+                    }
+                }
+
                 StatusText = $"Model changed to {GetActiveModelDisplayName()}.";
                 OnStateChanged();
                 return true;
@@ -417,6 +449,11 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
             exitCode = result.ExitCode,
             output = result.Output
         };
+    }
+
+    private Task<object> ExecutePowerShellToolAsync([Description("The PowerShell command to execute.")] string command)
+    {
+        return ExecuteTerminalCommandAsync(command);
     }
 
     private Task<object> ReadWrappedCommandEventsAsync([Description("The maximum number of recent wrapped command events to return.")] int maxEvents = 10)
@@ -799,14 +836,21 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
 
     private SessionConfig CreateSessionConfig(IReadOnlyList<ConversationMessage> existingMessages, string? preferredModel)
     {
+        AIFunction powershellTool = CreateOverridableTool(
+            async ([Description("The PowerShell command to execute.")] string command) => await ExecutePowerShellToolAsync(command),
+            "powershell",
+            "Runs a PowerShell command through the integrated terminal after the user approves it.");
+
         var sessionConfig = new SessionConfig
         {
             Streaming = true,
             SystemMessage = CreateSystemMessage(existingMessages),
             OnPermissionRequest = PermissionHandler.ApproveAll,
             OnUserInputRequest = HandleUserInputRequestAsync,
+            AvailableTools = [.. AllowedToolNames],
             Tools =
             [
+                powershellTool,
                 AIFunctionFactory.Create(
                     ExecuteTerminalCommandAsync,
                     "run_terminal_command",
@@ -832,6 +876,57 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         }
 
         return sessionConfig;
+    }
+
+    private static AIFunction CreateOverridableTool(Func<string, Task<object>> handler, string toolName, string description)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(description);
+
+        var tool = (AIFunction)AIFunctionFactory.Create(handler, toolName, description);
+        SetToolAdditionalProperties(tool, ToolOverrideProperties);
+        return tool;
+    }
+
+    private static void SetToolAdditionalProperties(AITool tool, IReadOnlyDictionary<string, object?> additionalProperties)
+    {
+        ArgumentNullException.ThrowIfNull(tool);
+        ArgumentNullException.ThrowIfNull(additionalProperties);
+
+        const BindingFlags bindingFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+        for (var type = tool.GetType(); type is not null; type = type.BaseType)
+        {
+            var property = type.GetProperty("AdditionalProperties", bindingFlags);
+            if (property?.SetMethod is not null)
+            {
+                property.SetValue(tool, additionalProperties);
+                return;
+            }
+
+            foreach (var field in type.GetFields(bindingFlags))
+            {
+                if (!string.Equals(field.Name, "<AdditionalProperties>k__BackingField", StringComparison.Ordinal)
+                    && !string.Equals(field.Name, "_additionalProperties", StringComparison.Ordinal)
+                    && !string.Equals(field.Name, "AdditionalProperties", StringComparison.Ordinal)
+                    && !IsAdditionalPropertiesFieldType(field.FieldType))
+                {
+                    continue;
+                }
+
+                field.SetValue(tool, additionalProperties);
+                return;
+            }
+        }
+
+        throw new InvalidOperationException("The AI tool override metadata field could not be found.");
+    }
+
+    private static bool IsAdditionalPropertiesFieldType(Type fieldType)
+    {
+        return typeof(IReadOnlyDictionary<string, object?>).IsAssignableFrom(fieldType)
+            || typeof(IDictionary<string, object?>).IsAssignableFrom(fieldType);
     }
 
     private async Task ReplaceAgentCommandBackchannelSessionAsync()
@@ -871,7 +966,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
             _preferredModel = ActiveModelId;
         }
 
-        var quota = await _client.Rpc.Account.GetQuotaAsync(cancellationToken);
+        var quota = await _client.Rpc.Account.GetQuotaAsync(gitHubToken: null, cancellationToken: cancellationToken);
         RemainingQuotaPercentage = ResolveRemainingQuotaPercentage(quota);
     }
 

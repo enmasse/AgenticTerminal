@@ -597,6 +597,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
         [
             new Hex1b.Widgets.TextBlockWidget("Select a Copilot model for this session.") { HeightHint = SizeHint.Content },
             new Hex1b.Widgets.TextBlockWidget("The active model is marked with ●.") { HeightHint = SizeHint.Content },
+            new Hex1b.Widgets.TextBlockWidget("Enter applies the selected model. Esc closes this dialog.") { HeightHint = SizeHint.Content },
             new Hex1b.Widgets.TextBlockWidget(string.Empty) { HeightHint = SizeHint.Content },
             new Hex1b.Widgets.ListWidget(modelItems)
             {
@@ -606,13 +607,13 @@ public sealed class Hex1bApplicationShell : IApplicationShell
                 MetricName = ModelDialogListMetricName
             }
             .OnSelectionChanged(args => _state.SelectedModelIndex = args.SelectedIndex)
-            .OnItemActivated(async args => await ChangeModelFromDialogAsync(context.Window, args.ActivatedIndex, args.CancellationToken)),
-            new Hex1b.Widgets.TextBlockWidget(string.Empty) { HeightHint = SizeHint.Content },
-            _.HStack(h =>
-            [
-                h.Button("Apply").OnClick(async args => await ChangeModelFromDialogAsync(context.Window, _state.SelectedModelIndex, args.CancellationToken)),
-                h.Button("Cancel").OnClick(_ => context.Window.Cancel())
-            ])
+            .OnItemActivated(async args => await ChangeModelFromDialogAsync(context.Window, args.ActivatedIndex, args.CancellationToken))
+            .WithInputBindings(bindings =>
+            {
+                Hex1bShellInputBindings.ConfigureModelDialogBindings(
+                    bindings,
+                    () => context.Window.Cancel());
+            })
         ]);
     }
 

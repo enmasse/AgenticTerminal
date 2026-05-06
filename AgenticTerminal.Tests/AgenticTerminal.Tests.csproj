@@ -24,4 +24,8 @@
     <ProjectReference Include="..\AgenticTerminal.TestHost\AgenticTerminal.TestHost.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Temp\" />
+  </ItemGroup>
+
 </Project>

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AgenticTerminal.Startup;
 
@@ -6,6 +7,13 @@ public static class AppConfigurationLoader
 {
     private const string ConfigurationDirectoryName = ".agenticterminal";
     private const string ConfigurationFileName = "settings.json";
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
 
     public static string GetDefaultConfigurationPath()
     {
@@ -30,10 +38,7 @@ public static class AppConfigurationLoader
         try
         {
             var json = File.ReadAllText(configurationPath);
-            var configuration = JsonSerializer.Deserialize<AppConfigurationDocument>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var configuration = JsonSerializer.Deserialize<AppConfigurationDocument>(json, SerializerOptions);
 
             return new AppConfiguration
             {
@@ -53,6 +58,36 @@ public static class AppConfigurationLoader
         catch (IOException exception)
         {
             throw new InvalidOperationException($"The configuration file '{configurationPath}' could not be read.", exception);
+        }
+    }
+
+    public static void Save(string configurationPath, AppConfiguration configuration)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(configurationPath);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        try
+        {
+            var configurationDirectory = Path.GetDirectoryName(configurationPath);
+            if (!string.IsNullOrWhiteSpace(configurationDirectory))
+            {
+                Directory.CreateDirectory(configurationDirectory);
+            }
+
+            var document = new AppConfigurationDocument(
+                configuration.CopilotModel,
+                configuration.FirstTokenTimeoutSeconds,
+                configuration.ShowDebugPanelByDefault);
+            var json = JsonSerializer.Serialize(document, SerializerOptions);
+            File.WriteAllText(configurationPath, json);
+        }
+        catch (IOException exception)
+        {
+            throw new InvalidOperationException($"The configuration file '{configurationPath}' could not be written.", exception);
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            throw new InvalidOperationException($"The configuration file '{configurationPath}' could not be written.", exception);
         }
     }
 

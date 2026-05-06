@@ -41,6 +41,13 @@ internal static class Hex1bShellInputBindings
             .Action(async (text, ctx) => await denyAsync(), "Deny command");
     }
 
+    public static void ConfigureModelDialogBindings(
+        InputBindingsBuilder bindings,
+        Action cancel)
+    {
+        bindings.Key(Hex1bKey.Escape).Action(cancel, "Cancel model dialog");
+    }
+
     public static void ConfigurePromptBindings(InputBindingsBuilder bindings, Func<Task> sendPromptAsync)
     {
         bindings.Remove(Hex1bKey.Enter, Hex1bModifiers.None);

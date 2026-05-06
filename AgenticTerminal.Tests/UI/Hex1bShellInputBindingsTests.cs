@@ -103,6 +103,21 @@ public sealed class Hex1bShellInputBindingsTests
         Assert.False(denyCharacterBinding.Predicate("y"));
     }
 
+    [Fact]
+    public void ConfigureModelDialogBindings_RegistersEscapeBinding()
+    {
+        var bindings = new InputBindingsBuilder();
+
+        Hex1bShellInputBindings.ConfigureModelDialogBindings(
+            bindings,
+            () => { });
+
+        Assert.Contains(bindings.Bindings, candidate =>
+            candidate.FirstStep.Key == Hex1bKey.Escape
+            && candidate.FirstStep.Modifiers == Hex1bModifiers.None
+            && candidate.Description == "Cancel model dialog");
+    }
+
     private static InputBindingsBuilder CreatePromptBindingsBuilder()
     {
         var bindings = new InputBindingsBuilder();

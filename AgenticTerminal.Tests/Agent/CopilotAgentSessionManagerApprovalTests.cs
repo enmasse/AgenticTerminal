@@ -3,6 +3,7 @@ using AgenticTerminal.Agent;
 using AgenticTerminal.Approvals;
 using AgenticTerminal.Persistence;
 using AgenticTerminal.Terminal;
+using GitHub.Copilot.SDK;
 
 namespace AgenticTerminal.Tests.Agent;
 
@@ -88,6 +89,34 @@ public sealed class CopilotAgentSessionManagerApprovalTests
         await task;
 
         Assert.Equal(["Get-Process"], terminalSession.ExecutedCommands);
+    }
+
+    [Fact]
+    public async Task CreateSessionConfig_RestrictsAvailableTools_ToIntegratedTerminalFlow()
+    {
+        var terminalSession = new RecordingTerminalSession();
+        await using var manager = new CopilotAgentSessionManager(
+            new ApprovalQueue(),
+            new ConversationSessionStore(Path.GetTempPath()),
+            terminalSession,
+            Environment.CurrentDirectory);
+
+        var createSessionConfigMethod = typeof(CopilotAgentSessionManager).GetMethod(
+            "CreateSessionConfig",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.NotNull(createSessionConfigMethod);
+
+        var sessionConfig = (SessionConfig?)createSessionConfigMethod!.Invoke(manager, [Array.Empty<ConversationMessage>(), null]);
+
+        Assert.NotNull(sessionConfig);
+        Assert.Equal(
+            ["powershell", "run_terminal_command", "read_wrapped_command_events", "read_wrapped_command_buffer", "read_terminal_snapshot", "ask_user"],
+            sessionConfig!.AvailableTools);
+        Assert.DoesNotContain("powershell", sessionConfig.ExcludedTools ?? []);
+        var powershellTool = Assert.Single(sessionConfig.Tools ?? [], tool => string.Equals(tool.Name, "powershell", StringComparison.Ordinal));
+        Assert.True(powershellTool.AdditionalProperties?.ContainsKey("is_override"));
+        Assert.Equal(true, powershellTool.AdditionalProperties?["is_override"]);
     }
 
     private static async Task<object?> InvokeExecuteTerminalCommandAsync(MethodInfo executeMethod, CopilotAgentSessionManager manager, string command)

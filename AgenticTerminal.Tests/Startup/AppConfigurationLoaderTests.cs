@@ -40,6 +40,44 @@ public sealed class AppConfigurationLoaderTests : IDisposable
         Assert.Contains(configurationPath, exception.Message);
     }
 
+    [Fact]
+    public void Save_WithConfiguration_WritesSettingsFile()
+    {
+        var configurationPath = Path.Combine(_tempDirectory, "nested", "settings.json");
+
+        AppConfigurationLoader.Save(configurationPath, new AppConfiguration
+        {
+            CopilotModel = "gpt-5",
+            FirstTokenTimeoutSeconds = 20,
+            ShowDebugPanelByDefault = true
+        });
+
+        Assert.True(File.Exists(configurationPath));
+
+        var json = File.ReadAllText(configurationPath);
+        Assert.Contains("\"copilotModel\": \"gpt-5\"", json);
+        Assert.Contains("\"firstTokenTimeoutSeconds\": 20", json);
+        Assert.Contains("\"showDebugPanelByDefault\": true", json);
+    }
+
+    [Fact]
+    public void Save_ThenLoad_RoundTripsConfiguration()
+    {
+        var configurationPath = Path.Combine(_tempDirectory, "settings.json");
+        var expected = new AppConfiguration
+        {
+            CopilotModel = "claude-sonnet-4.5",
+            FirstTokenTimeoutSeconds = 15,
+            ShowDebugPanelByDefault = false
+        };
+
+        AppConfigurationLoader.Save(configurationPath, expected);
+
+        var actual = AppConfigurationLoader.Load(configurationPath);
+
+        Assert.Equal(expected, actual);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory))

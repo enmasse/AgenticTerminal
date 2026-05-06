@@ -19,9 +19,10 @@ internal static class AppHost
 
         AppCommandLineOptions options;
         AppConfiguration configuration;
+        var configurationPath = AppConfigurationLoader.GetDefaultConfigurationPath();
         try
         {
-            configuration = AppConfigurationLoader.Load(AppConfigurationLoader.GetDefaultConfigurationPath());
+            configuration = AppConfigurationLoader.Load(configurationPath);
             options = AppCommandLineOptionsParser.Parse(args, AppCommandLineOptions.Interactive.ApplyConfiguration(configuration));
         }
         catch (ArgumentException exception)
@@ -60,7 +61,17 @@ internal static class AppHost
             options.CopilotModel,
             new CopilotSessionOptions(configuration.FirstTokenTimeoutSeconds is > 0
                 ? TimeSpan.FromSeconds(configuration.FirstTokenTimeoutSeconds.Value)
-                : null));
+                : null,
+                async (modelId, _) =>
+                {
+                    configuration = configuration with
+                    {
+                        CopilotModel = modelId
+                    };
+
+                    AppConfigurationLoader.Save(configurationPath, configuration);
+                    await Task.CompletedTask;
+                }));
 
         try
         {

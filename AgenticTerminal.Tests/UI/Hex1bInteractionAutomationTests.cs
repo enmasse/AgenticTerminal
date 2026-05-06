@@ -35,6 +35,24 @@ public sealed class Hex1bInteractionAutomationTests
     }
 
     [Fact]
+    public async Task Prompt_ModelDialog_EnterAppliesSelection_AndClosesDialog()
+    {
+        await using var harness = await InteractionHarness.StartAsync();
+
+        await harness.Automator.KeyAsync(Hex1bKey.F4);
+        await harness.Automator.WaitUntilTextAsync("Dialog state: open");
+
+        harness.FocusDialogList();
+
+        await harness.Automator.DownAsync();
+        await harness.Automator.WaitUntilTextAsync("Selected model: model-b");
+
+        await harness.Automator.EnterAsync();
+        await harness.Automator.WaitUntilTextAsync("Active model: model-b");
+        await harness.Automator.WaitUntilTextAsync("Dialog state: closed");
+    }
+
+    [Fact]
     public async Task Prompt_RemainsSendable_AfterFocusIsMovedAwayAndAgentUpdateOccurs()
     {
         await using var harness = await InteractionHarness.StartAsync();
@@ -60,6 +78,7 @@ public sealed class Hex1bInteractionAutomationTests
         private bool _isDialogOpen;
         private int _newlineCount;
         private int _sendCount;
+        private int _activeModelIndex;
         private int _selectedModelIndex;
 
         private InteractionHarness(Hex1bTerminal terminal, Hex1bTerminalAutomator automator)
@@ -163,6 +182,8 @@ public sealed class Hex1bInteractionAutomationTests
                     HeightHint = Hex1b.Layout.SizeHint.Content,
                     WidthHint = Hex1b.Layout.SizeHint.Fill
                 },
+                new TextBlockWidget($"Dialog state: {(_isDialogOpen ? "open" : "closed")}") { HeightHint = Hex1b.Layout.SizeHint.Content },
+                new TextBlockWidget($"Active model: {_models[_activeModelIndex]}") { HeightHint = Hex1b.Layout.SizeHint.Content },
                 new TextBlockWidget($"Selected model: {_models[_selectedModelIndex]}") { HeightHint = Hex1b.Layout.SizeHint.Content }
             };
 
@@ -217,6 +238,13 @@ public sealed class Hex1bInteractionAutomationTests
                         {
                             _selectedModelIndex = args.SelectedIndex;
                             _app?.Invalidate();
+                        })
+                        .OnItemActivated(async args => await ApplySelectedModelAsync())
+                        .WithInputBindings(bindings =>
+                        {
+                            Hex1bShellInputBindings.ConfigureModelDialogBindings(
+                                bindings,
+                                CloseModelDialog);
                         }),
                         new TextBlockWidget("Dialog open") { HeightHint = Hex1b.Layout.SizeHint.Content }
                     ]))
@@ -245,6 +273,19 @@ public sealed class Hex1bInteractionAutomationTests
         {
             _isDialogOpen = true;
             RequestDialogFocus();
+        }
+
+        private Task ApplySelectedModelAsync()
+        {
+            _activeModelIndex = _selectedModelIndex;
+            CloseModelDialog();
+            return Task.CompletedTask;
+        }
+
+        private void CloseModelDialog()
+        {
+            _isDialogOpen = false;
+            _app?.Invalidate();
         }
 
         private void RequestDialogFocus()

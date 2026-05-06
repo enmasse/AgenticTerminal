@@ -23,6 +23,7 @@ public sealed class TerminalSessionStartupArgumentsTests
 
         Assert.Contains("function prompt { '' }", arguments);
         Assert.Contains("[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)", arguments);
+        Assert.Contains("function __agenticterminal_invoke", arguments, StringComparison.Ordinal);
     }
 
     [Fact]

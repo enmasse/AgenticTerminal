@@ -32,6 +32,7 @@ internal static class Hex1bShellInputBindings
         Func<Task> approveAsync,
         Func<Task> denyAsync)
     {
+        bindings.Key(Hex1bKey.Enter).Action(async () => await approveAsync(), "Approve command");
         bindings.Key(Hex1bKey.Y).Action(async () => await approveAsync(), "Approve command");
         bindings.Key(Hex1bKey.N).Action(async () => await denyAsync(), "Deny command");
         bindings.Character(text => Hex1bApplicationShell.MatchesApprovalInput(text, 'y'))

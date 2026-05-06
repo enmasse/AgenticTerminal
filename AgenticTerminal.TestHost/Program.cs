@@ -1,4 +1,6 @@
 using System.Text;
+using System.IO.Pipes;
+using System.Text.RegularExpressions;
 
 Console.InputEncoding = Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
@@ -46,12 +48,12 @@ static async Task ProcessLineAsync(string line)
         Environment.Exit(0);
     }
 
-    if (TryHandleWrappedCommand(line, out var decodedCommand, out var completionMarker))
+    if (TryHandleWrappedCommand(line, out var decodedCommand, out var commandId, out var pipeName))
     {
         await Console.Out.WriteLineAsync("RECEIVED:WRAPPED-COMMAND");
         await Console.Out.WriteLineAsync($"COMMAND:{decodedCommand}");
         await Console.Out.WriteLineAsync($"OUTPUT:{decodedCommand.ToUpperInvariant()}");
-        await Console.Out.WriteLineAsync($"{completionMarker}0");
+        await SendCompletionAsync(pipeName, commandId, 0);
     }
     else
     {
@@ -68,44 +70,54 @@ static async Task WritePromptAsync()
     await Console.Out.FlushAsync();
 }
 
-static bool TryHandleWrappedCommand(string line, out string decodedCommand, out string completionMarker)
+static bool TryHandleWrappedCommand(string line, out string decodedCommand, out string commandId, out string pipeName)
 {
-    const string base64Prefix = "FromBase64String('";
-    const string markerPrefix = "Write-Host ('";
-    const string markerSuffix = "' + $__agenticterminal_exit)";
-
     decodedCommand = string.Empty;
-    completionMarker = string.Empty;
+    commandId = string.Empty;
+    pipeName = string.Empty;
 
-    var base64Start = line.IndexOf(base64Prefix, StringComparison.Ordinal);
-    if (base64Start < 0)
+    var encodedCommandMatch = Regex.Match(line, @"FromBase64String\('(?<command>[^']+)'\)", RegexOptions.CultureInvariant);
+    var commandIdMatch = Regex.Match(line, @"WriteLine\('(?<id>[^']+):' \+ \$__agenticterminal_exit\)", RegexOptions.CultureInvariant);
+    var pipeNameMatch = Regex.Match(line, @"NamedPipeClientStream\]::new\('\.', '(?<pipe>[^']+)', \[System\.IO\.Pipes\.PipeDirection\]::Out\)", RegexOptions.CultureInvariant);
+    if (!encodedCommandMatch.Success || !commandIdMatch.Success || !pipeNameMatch.Success)
     {
         return false;
     }
 
-    base64Start += base64Prefix.Length;
-    var base64End = line.IndexOf("')", base64Start, StringComparison.Ordinal);
-    if (base64End < 0)
+    try
     {
+        decodedCommand = Encoding.UTF8.GetString(Convert.FromBase64String(encodedCommandMatch.Groups["command"].Value));
+        commandId = commandIdMatch.Groups["id"].Value;
+        pipeName = pipeNameMatch.Groups["pipe"].Value;
+        return true;
+    }
+    catch (FormatException)
+    {
+        decodedCommand = string.Empty;
+        commandId = string.Empty;
+        pipeName = string.Empty;
         return false;
     }
+}
 
-    var markerStart = line.IndexOf(markerPrefix, StringComparison.Ordinal);
-    if (markerStart < 0)
+static async Task SendCompletionAsync(string pipeName, string commandId, int exitCode)
+{
+    try
     {
-        return false;
+        await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+        await pipe.ConnectAsync(5000);
+        await using var writer = new StreamWriter(pipe, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true)
+        {
+            AutoFlush = true
+        };
+        await writer.WriteLineAsync($"{commandId}:{exitCode}");
     }
-
-    markerStart += markerPrefix.Length;
-    var markerEnd = line.IndexOf(markerSuffix, markerStart, StringComparison.Ordinal);
-    if (markerEnd < 0)
+    catch (IOException)
     {
-        return false;
     }
-
-    completionMarker = line[markerStart..markerEnd];
-    decodedCommand = Encoding.UTF8.GetString(Convert.FromBase64String(line[base64Start..base64End]));
-    return true;
+    catch (TimeoutException)
+    {
+    }
 }
 
 static string Escape(string text)

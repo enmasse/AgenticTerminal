@@ -84,6 +84,10 @@ public sealed class Hex1bShellInputBindingsTests
             && candidate.FirstStep.Modifiers == Hex1bModifiers.None
             && candidate.Description == "Approve command");
         Assert.Contains(bindings.Bindings, candidate =>
+            candidate.FirstStep.Key == Hex1bKey.Enter
+            && candidate.FirstStep.Modifiers == Hex1bModifiers.None
+            && candidate.Description == "Approve command");
+        Assert.Contains(bindings.Bindings, candidate =>
             candidate.FirstStep.Key == Hex1bKey.N
             && candidate.FirstStep.Modifiers == Hex1bModifiers.None
             && candidate.Description == "Deny command");

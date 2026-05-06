@@ -13,3 +13,4 @@ obj/
 # Test and diagnostic output
 TestResults/
 *.trx
+/.packages-temp

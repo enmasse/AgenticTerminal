@@ -24,6 +24,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
     private readonly object _promptTimingSyncRoot = new();
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private readonly TimeSpan _firstTokenTimeout;
+    private AgentCommandBackchannelSession? _agentCommandBackchannelSession;
     private CopilotClient? _client;
     private CopilotSession? _session;
     private IDisposable? _sessionSubscription;
@@ -323,6 +324,11 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
             await _client.DisposeAsync();
         }
 
+        if (_agentCommandBackchannelSession is not null)
+        {
+            await _agentCommandBackchannelSession.DisposeAsync();
+        }
+
         await _terminalSession.DisposeAsync();
         _sessionLock.Dispose();
     }
@@ -364,6 +370,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         _activeTitle = "New session";
         _createdAt = DateTimeOffset.UtcNow;
         _transcript.Clear();
+        await ReplaceAgentCommandBackchannelSessionAsync();
         await ReplaceSessionAsync([], cancellationToken);
         await PersistActiveSessionAsync(cancellationToken);
         SavedSessions = await _conversationSessionStore.ListSessionsAsync(cancellationToken);
@@ -380,6 +387,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         _activeTitle = document.Title;
         _createdAt = document.CreatedAt;
         _transcript.Load(document.Messages);
+        await ReplaceAgentCommandBackchannelSessionAsync();
         await ReplaceSessionAsync(document.Messages, cancellationToken);
         SavedSessions = await _conversationSessionStore.ListSessionsAsync(cancellationToken);
         StatusText = "Ready";
@@ -398,13 +406,72 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
             };
         }
 
-        var result = await _terminalSession.ExecuteCommandAsync(command);
+        var commandToExecute = !string.IsNullOrWhiteSpace(_activeSessionId)
+            && TrackedCommandBuilder.TryWrap(_activeSessionId, command, out var wrappedCommand)
+                ? wrappedCommand
+                : command;
+        var result = await _terminalSession.ExecuteCommandAsync(commandToExecute);
         return new
         {
             approved = true,
             exitCode = result.ExitCode,
             output = result.Output
         };
+    }
+
+    private Task<object> ReadWrappedCommandEventsAsync([Description("The maximum number of recent wrapped command events to return.")] int maxEvents = 10)
+    {
+        var boundedMaxEvents = Math.Clamp(maxEvents, 1, 50);
+        var summaries = _agentCommandBackchannelSession?.ReadEventsSince(0)
+            .TakeLast(boundedMaxEvents)
+            .Select(summary => new
+            {
+                commandId = summary.CommandId,
+                eventType = summary.EventType.ToString(),
+                commandText = summary.CommandText,
+                pid = summary.ProcessId,
+                startedAt = summary.StartedAt,
+                completedAt = summary.CompletedAt,
+                duration = summary.Duration,
+                exitCode = summary.ExitCode
+            })
+            .ToArray() ?? [];
+
+        return Task.FromResult<object>(new
+        {
+            sessionId = _activeSessionId,
+            events = summaries
+        });
+    }
+
+    private Task<object> ReadWrappedCommandBufferAsync(
+        [Description("The commandId returned by the wrapped command event stream.")] string commandId,
+        [Description("The stream to inspect. Use 'stdout' or 'stderr'.")] string stream = "stdout",
+        [Description("The maximum number of tail lines to return from the circular buffer.")] int maxLines = 12)
+    {
+        if (_agentCommandBackchannelSession is null)
+        {
+            return Task.FromResult<object>(new
+            {
+                sessionId = _activeSessionId,
+                commandId,
+                stream,
+                lines = Array.Empty<string>()
+            });
+        }
+
+        var selectedStream = string.Equals(stream, "stderr", StringComparison.OrdinalIgnoreCase)
+            ? AgentCommandBufferStream.StandardError
+            : AgentCommandBufferStream.StandardOutput;
+        var tail = _agentCommandBackchannelSession.ReadBufferTail(commandId, selectedStream, Math.Clamp(maxLines, 1, 50));
+
+        return Task.FromResult<object>(new
+        {
+            sessionId = _activeSessionId,
+            commandId,
+            stream = selectedStream == AgentCommandBufferStream.StandardError ? "stderr" : "stdout",
+            lines = tail.Lines
+        });
     }
 
     private Task<string> ReadTerminalSnapshotAsync()
@@ -700,6 +767,11 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         builder.AppendLine("Action rules:");
         builder.AppendLine("- Use the run_terminal_command tool when you need to execute shell commands.");
         builder.AppendLine("- The user must approve each terminal command before it runs.");
+        builder.AppendLine("- Prefer agt --session=<current-session-id> <exe> [args...] for executable commands that need reliable lifecycle tracking.");
+        builder.AppendLine("- Use agt script --session=<current-session-id> -- <script> only when the command cannot be expressed as a direct executable invocation.");
+        builder.AppendLine("- Keep shell pipelines shell-owned; wrap individual executable stages with agt only when stage-level tracking is needed.");
+        builder.AppendLine("- Use read_wrapped_command_events to inspect wrapped command lifecycle events and recover the hidden commandId values emitted over the backchannel.");
+        builder.AppendLine("- Use read_wrapped_command_buffer with a commandId to inspect the per-command stdout or stderr circular buffer when you need recent diagnostic output without flooding the conversation.");
         builder.AppendLine("- The current prompt does not automatically include a terminal snapshot; request one with read_terminal_snapshot when you need it.");
         builder.AppendLine("- Use the read_terminal_snapshot tool when terminal state matters or when the current screen is unclear.");
         builder.AppendLine("- Prefer reading terminal state before suggesting follow-up terminal actions when context is ambiguous.");
@@ -740,6 +812,14 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
                     "run_terminal_command",
                     "Runs a PowerShell command in the integrated terminal after the user approves it."),
                 AIFunctionFactory.Create(
+                    ReadWrappedCommandEventsAsync,
+                    "read_wrapped_command_events",
+                    "Returns recent agt wrapper lifecycle events, including commandId values for tracked commands."),
+                AIFunctionFactory.Create(
+                    ReadWrappedCommandBufferAsync,
+                    "read_wrapped_command_buffer",
+                    "Returns the tail of the stdout or stderr circular buffer for a tracked agt command."),
+                AIFunctionFactory.Create(
                     ReadTerminalSnapshotAsync,
                     "read_terminal_snapshot",
                     "Returns a formatted snapshot of the current integrated terminal screen.")
@@ -752,6 +832,20 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         }
 
         return sessionConfig;
+    }
+
+    private async Task ReplaceAgentCommandBackchannelSessionAsync()
+    {
+        if (_agentCommandBackchannelSession is not null)
+        {
+            await _agentCommandBackchannelSession.DisposeAsync();
+            _agentCommandBackchannelSession = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_activeSessionId))
+        {
+            _agentCommandBackchannelSession = new AgentCommandBackchannelSession(_activeSessionId);
+        }
     }
 
     private async Task RefreshModelStateAsync(CancellationToken cancellationToken)

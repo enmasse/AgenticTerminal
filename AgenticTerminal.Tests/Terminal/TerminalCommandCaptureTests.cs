@@ -82,6 +82,24 @@ public sealed class TerminalCommandCaptureTests
     }
 
     [Fact]
+    public async Task CompleteFromBackchannel_CompletesWithoutVisibleMarkerOutput()
+    {
+        var capture = new TerminalCommandCapture("pipe123", "Get-Service");
+
+        capture.AppendChunk("$__agenticterminal_command = decode\r\nservice-output\r\n");
+
+        Assert.True(capture.TryCompleteFromBackchannel(0));
+        Assert.True(capture.IsCompleted);
+        Assert.Equal(0, capture.ExitCode);
+        Assert.Equal("Get-Service\r\nservice-output\r\n", capture.Output);
+
+        var result = await capture.Completion.Task;
+
+        Assert.Equal("Get-Service\r\nservice-output\r\n", result.Output);
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
     public void AppendChunk_IgnoresMarkerLiteralInsideEchoedWrapperUntilRealCompletionLineArrives()
     {
         var capture = new TerminalCommandCapture("mno345", "Get-ChildItem -Force");

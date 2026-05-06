@@ -38,6 +38,58 @@ public sealed class CopilotAgentSessionManagerApprovalTests
         Assert.Equal(["Get-Process", "Get-Service"], terminalSession.ExecutedCommands);
     }
 
+    [Fact]
+    public async Task ExecuteTerminalCommandAsync_WithExecutableCommand_UsesAgtWrapperExecution()
+    {
+        var terminalSession = new RecordingTerminalSession();
+        await using var manager = new CopilotAgentSessionManager(
+            new ApprovalQueue(),
+            new ConversationSessionStore(Path.GetTempPath()),
+            terminalSession,
+            Environment.CurrentDirectory);
+        SetActiveSessionId(manager, "session-42");
+
+        var executeMethod = typeof(CopilotAgentSessionManager).GetMethod(
+            "ExecuteTerminalCommandAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.NotNull(executeMethod);
+
+        var task = InvokeExecuteTerminalCommandAsync(executeMethod!, manager, "git status");
+
+        await WaitForPendingApprovalAsync(manager, "git status");
+        Assert.True(await manager.ResolvePendingApprovalAsync(true));
+        await task;
+
+        Assert.Equal(["agt --session=session-42 git status"], terminalSession.ExecutedCommands);
+    }
+
+    [Fact]
+    public async Task ExecuteTerminalCommandAsync_WithShellOwnedCommand_UsesOriginalExecution()
+    {
+        var terminalSession = new RecordingTerminalSession();
+        await using var manager = new CopilotAgentSessionManager(
+            new ApprovalQueue(),
+            new ConversationSessionStore(Path.GetTempPath()),
+            terminalSession,
+            Environment.CurrentDirectory);
+        SetActiveSessionId(manager, "session-42");
+
+        var executeMethod = typeof(CopilotAgentSessionManager).GetMethod(
+            "ExecuteTerminalCommandAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.NotNull(executeMethod);
+
+        var task = InvokeExecuteTerminalCommandAsync(executeMethod!, manager, "Get-Process");
+
+        await WaitForPendingApprovalAsync(manager, "Get-Process");
+        Assert.True(await manager.ResolvePendingApprovalAsync(true));
+        await task;
+
+        Assert.Equal(["Get-Process"], terminalSession.ExecutedCommands);
+    }
+
     private static async Task<object?> InvokeExecuteTerminalCommandAsync(MethodInfo executeMethod, CopilotAgentSessionManager manager, string command)
     {
         var task = (Task<object?>?)executeMethod.Invoke(manager, [command]);
@@ -58,6 +110,13 @@ public sealed class CopilotAgentSessionManagerApprovalTests
 
             await Task.Delay(25, cancellationTokenSource.Token);
         }
+    }
+
+    private static void SetActiveSessionId(CopilotAgentSessionManager manager, string sessionId)
+    {
+        var field = typeof(CopilotAgentSessionManager).GetField("_activeSessionId", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(field);
+        field!.SetValue(manager, sessionId);
     }
 
     private sealed class RecordingTerminalSession : ITerminalSession

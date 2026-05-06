@@ -23,7 +23,7 @@ public sealed class Hex1bPtyTerminalSessionTests
     }
 
     [Fact]
-    public void BuildWrappedCommandScript_EmitsComputedCompletionMarker()
+    public void BuildWrappedCommandScript_ConnectsToNamedPipeBackchannel()
     {
         var method = typeof(Hex1bPtyTerminalSession).GetMethod(
             "BuildWrappedCommandScript",
@@ -31,9 +31,11 @@ public sealed class Hex1bPtyTerminalSessionTests
 
         Assert.NotNull(method);
 
-        var script = (string)method!.Invoke(null, ["Get-ChildItem", "abc123"])!;
+        var script = (string)method!.Invoke(null, ["Get-ChildItem", "abc123", "agenticterminal-test-pipe"])!;
 
-        Assert.Contains("Write-Host ('__AGENTICTERMINAL_DONE__:abc123:' + $__agenticterminal_exit)", script, StringComparison.Ordinal);
+        Assert.Contains("NamedPipeClientStream", script, StringComparison.Ordinal);
+        Assert.Contains("agenticterminal-test-pipe", script, StringComparison.Ordinal);
+        Assert.Contains("WriteLine('abc123:' + $__agenticterminal_exit)", script, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -67,9 +69,8 @@ public sealed class Hex1bPtyTerminalSessionTests
     [Fact]
     public async Task SendTextAsync_ForwardsWrappedCommandScriptToFakeShell()
     {
-        KillLingeringTestHostProcesses();
         var output = new ConcurrentQueue<string>();
-        var session = CreateSession();
+        var session = CreatePowerShellSession();
         using var subscription = Subscribe(session, output);
 
         try
@@ -77,7 +78,7 @@ public sealed class Hex1bPtyTerminalSessionTests
             using var cancellationTokenSource = new CancellationTokenSource(TestTimeout);
 
             await session.StartAsync(cancellationTokenSource.Token);
-            await WaitForOutputAsync(output, "$", cancellationTokenSource.Token);
+            await WaitForOutputAsync(output, "PS>", cancellationTokenSource.Token);
 
             var buildMethod = typeof(Hex1bPtyTerminalSession).GetMethod(
                 "BuildWrappedCommandScript",
@@ -85,26 +86,29 @@ public sealed class Hex1bPtyTerminalSessionTests
 
             Assert.NotNull(buildMethod);
 
-            var script = (string)buildMethod!.Invoke(null, ["Get-ChildItem -Force", "abc123"])!;
+            await using var backchannel = new TerminalCommandBackchannel();
+            var script = (string)buildMethod!.Invoke(null, ["Write-Output 'wrapped-ok'", "abc123", backchannel.PipeName])!;
             await session.SendTextAsync(BuildSubmitted(script), cancellationTokenSource.Token);
 
-            await WaitForOutputAsync(output, "RECEIVED:", cancellationTokenSource.Token);
-            await WaitForOutputAsync(output, "COMMAND:Get-ChildItem -Force", cancellationTokenSource.Token);
-            await WaitForOutputAsync(output, $"{TerminalCommandCapture.CompletionMarkerPrefix}:abc123:0", cancellationTokenSource.Token);
+            var completionMessage = await backchannel.ReadMessageAsync(cancellationTokenSource.Token);
+
+            Assert.Equal("abc123", completionMessage.CommandId);
+            Assert.Equal(0, completionMessage.ExitCode);
+
+            await WaitForOutputAsync(output, "wrapped-ok", cancellationTokenSource.Token);
+            Assert.DoesNotContain(TerminalCommandCapture.CompletionMarkerPrefix, string.Concat(output.ToArray()), StringComparison.Ordinal);
         }
         finally
         {
             await DisposeSessionAsync(session);
-            KillLingeringTestHostProcesses();
         }
     }
 
     [Fact]
     public async Task ExecuteCommandAsync_RunsWrappedCommandThroughFakeShell()
     {
-        KillLingeringTestHostProcesses();
         var output = new ConcurrentQueue<string>();
-        var session = CreateSession();
+        var session = CreatePowerShellSession();
         using var subscription = Subscribe(session, output);
 
         try
@@ -112,12 +116,12 @@ public sealed class Hex1bPtyTerminalSessionTests
             using var cancellationTokenSource = new CancellationTokenSource(TestTimeout);
 
             await session.StartAsync(cancellationTokenSource.Token);
-            await WaitForOutputAsync(output, "$", cancellationTokenSource.Token);
+            await WaitForOutputAsync(output, "PS>", cancellationTokenSource.Token);
 
             TerminalCommandResult result;
             try
             {
-                result = await session.ExecuteCommandAsync("Get-ChildItem -Force", cancellationTokenSource.Token)
+                result = await session.ExecuteCommandAsync("Write-Output 'named-pipe-test'", cancellationTokenSource.Token)
                     .WaitAsync(cancellationTokenSource.Token);
             }
             catch (OperationCanceledException)
@@ -125,25 +129,23 @@ public sealed class Hex1bPtyTerminalSessionTests
                 throw new Xunit.Sdk.XunitException($"Timed out waiting for ExecuteCommandAsync. Current output: {string.Concat(output.ToArray())}");
             }
 
-            Assert.Equal("Get-ChildItem -Force", result.CommandText);
+            Assert.Equal("Write-Output 'named-pipe-test'", result.CommandText);
             Assert.Equal(0, result.ExitCode);
-            Assert.Contains("COMMAND:Get-ChildItem -Force", result.Output, StringComparison.Ordinal);
-            Assert.Contains("OUTPUT:GET-CHILDITEM -FORCE", result.Output, StringComparison.Ordinal);
+            Assert.Contains("named-pipe-test", result.Output, StringComparison.Ordinal);
             Assert.DoesNotContain("$__agenticterminal_command", result.Output, StringComparison.Ordinal);
+            Assert.DoesNotContain(TerminalCommandCapture.CompletionMarkerPrefix, result.Output, StringComparison.Ordinal);
         }
         finally
         {
             await DisposeSessionAsync(session);
-            KillLingeringTestHostProcesses();
         }
     }
 
     [Fact]
     public async Task ExecuteCommandAsync_WithSequentialCommands_RunsBothCommands()
     {
-        KillLingeringTestHostProcesses();
         var output = new ConcurrentQueue<string>();
-        var session = CreateSession();
+        var session = CreatePowerShellSession();
         using var subscription = Subscribe(session, output);
 
         try
@@ -151,20 +153,19 @@ public sealed class Hex1bPtyTerminalSessionTests
             using var cancellationTokenSource = new CancellationTokenSource(TestTimeout);
 
             await session.StartAsync(cancellationTokenSource.Token);
-            await WaitForOutputAsync(output, "$", cancellationTokenSource.Token);
+            await WaitForOutputAsync(output, "PS>", cancellationTokenSource.Token);
 
-            var firstResult = await session.ExecuteCommandAsync("Get-Process", cancellationTokenSource.Token)
+            var firstResult = await session.ExecuteCommandAsync("Write-Output 'first-command'", cancellationTokenSource.Token)
                 .WaitAsync(cancellationTokenSource.Token);
-            var secondResult = await session.ExecuteCommandAsync("Get-Service", cancellationTokenSource.Token)
+            var secondResult = await session.ExecuteCommandAsync("Write-Output 'second-command'", cancellationTokenSource.Token)
                 .WaitAsync(cancellationTokenSource.Token);
 
-            Assert.Contains("COMMAND:Get-Process", firstResult.Output, StringComparison.Ordinal);
-            Assert.Contains("COMMAND:Get-Service", secondResult.Output, StringComparison.Ordinal);
+            Assert.Contains("first-command", firstResult.Output, StringComparison.Ordinal);
+            Assert.Contains("second-command", secondResult.Output, StringComparison.Ordinal);
         }
         finally
         {
             await DisposeSessionAsync(session);
-            KillLingeringTestHostProcesses();
         }
     }
 
@@ -196,6 +197,14 @@ public sealed class Hex1bPtyTerminalSessionTests
             true);
 
         return new Hex1bPtyTerminalSession(startupOptions, launchConfiguration);
+    }
+
+    private static Hex1bPtyTerminalSession CreatePowerShellSession()
+    {
+        return new Hex1bPtyTerminalSession(new TerminalSessionStartupOptions(
+            TerminalSessionMode.InteractivePseudoConsole,
+            SuppressPrompt: true,
+            LoadUserProfile: false));
     }
 
     private static IDisposable Subscribe(ITerminalSession session, ConcurrentQueue<string> output)

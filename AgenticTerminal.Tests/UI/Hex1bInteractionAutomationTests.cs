@@ -34,10 +34,24 @@ public sealed class Hex1bInteractionAutomationTests
         await harness.Automator.WaitUntilTextAsync("Selected model: model-b");
     }
 
+    [Fact]
+    public async Task Prompt_RemainsSendable_AfterFocusIsMovedAwayAndAgentUpdateOccurs()
+    {
+        await using var harness = await InteractionHarness.StartAsync();
+
+        harness.FocusSecondaryTarget();
+        harness.RestorePromptFocusAfterAgentUpdate();
+        await harness.Automator.WaitAsync(100);
+
+        await harness.Automator.EnterAsync();
+        await harness.Automator.WaitUntilTextAsync("Send count: 1");
+    }
+
     private sealed class InteractionHarness : IAsyncDisposable
     {
         private const string PromptMetricName = "test-prompt";
         private const string DialogListMetricName = "test-model-dialog-list";
+        private const string SecondaryMetricName = "test-secondary-focus";
 
         private readonly CancellationTokenSource _cancellationTokenSource = new(TimeSpan.FromSeconds(15));
         private readonly string[] _models = ["model-a", "model-b", "model-c"];
@@ -102,6 +116,19 @@ public sealed class Hex1bInteractionAutomationTests
             _app.Invalidate();
         }
 
+        public void FocusSecondaryTarget()
+        {
+            Assert.NotNull(_app);
+            Assert.True(_app!.FocusWhere(node => string.Equals(node.MetricName, SecondaryMetricName, StringComparison.Ordinal)));
+            _app.Invalidate();
+        }
+
+        public void RestorePromptFocusAfterAgentUpdate()
+        {
+            _app?.RequestFocus(node => string.Equals(node.MetricName, PromptMetricName, StringComparison.Ordinal));
+            _app?.Invalidate();
+        }
+
         public async ValueTask DisposeAsync()
         {
             try
@@ -130,6 +157,12 @@ public sealed class Hex1bInteractionAutomationTests
                 new TextBlockWidget($"Send count: {_sendCount}") { HeightHint = Hex1b.Layout.SizeHint.Content },
                 new TextBlockWidget($"Newline count: {_newlineCount}") { HeightHint = Hex1b.Layout.SizeHint.Content },
                 BuildPromptEditor(),
+                new InteractableWidget(_ => new TextBlockWidget("secondary focus target"))
+                {
+                    MetricName = SecondaryMetricName,
+                    HeightHint = Hex1b.Layout.SizeHint.Content,
+                    WidthHint = Hex1b.Layout.SizeHint.Fill
+                },
                 new TextBlockWidget($"Selected model: {_models[_selectedModelIndex]}") { HeightHint = Hex1b.Layout.SizeHint.Content }
             };
 
@@ -208,7 +241,7 @@ public sealed class Hex1bInteractionAutomationTests
                 ctx => ctx.RequestStop());
         }
 
-        private void OpenModelDialog()
+        public void OpenModelDialog()
         {
             _isDialogOpen = true;
             RequestDialogFocus();

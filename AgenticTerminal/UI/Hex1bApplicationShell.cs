@@ -19,10 +19,16 @@ public sealed class Hex1bApplicationShell : IApplicationShell
     private const string ToolActivityMetricName = "tool-activity";
     private const string DebugPanelMetricName = "debug-panel";
     private const string ModelDialogListMetricName = "model-dialog-list";
+    private const string TerminalSelectionMetricName = "terminal-selection";
 
     internal static bool MatchesApprovalInput(string text, char expected)
     {
         return text.Length == 1 && string.Equals(text, expected.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool ShouldRestorePromptFocusAfterAgentUpdate(Hex1bFocusTarget focusTarget)
+    {
+        return focusTarget is not (Hex1bFocusTarget.Prompt or Hex1bFocusTarget.Approval);
     }
 
     private readonly CopilotAgentSessionManager _sessionManager;
@@ -32,6 +38,21 @@ public sealed class Hex1bApplicationShell : IApplicationShell
     private readonly TerminalWidgetHandle _terminalWidgetHandle;
     private WindowHandle? _modelDialogWindow;
     private Action? _requestModelDialogFocus;
+
+    internal static Hex1bAppOptions CreateAppOptions()
+    {
+        return new Hex1bAppOptions
+        {
+            EnableMouse = true
+        };
+    }
+
+    internal static Hex1bTerminalBuilder ConfigureTerminalBuilder(Hex1bTerminalBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        return builder.WithMouse(true);
+    }
 
     public Hex1bApplicationShell(
         CopilotAgentSessionManager sessionManager,
@@ -45,7 +66,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
         _state.IsDebugPanelVisible = options?.ShowDebugPanelByDefault ?? ApplicationShellOptions.Default.ShowDebugPanelByDefault;
 
         TerminalWidgetHandle terminalWidgetHandle;
-        _ = new Hex1bTerminalBuilder()
+        _ = ConfigureTerminalBuilder(new Hex1bTerminalBuilder())
             .WithWorkload(_terminalWorkloadAdapter)
             .WithTerminalWidget(out terminalWidgetHandle)
             .WithDimensions(120, 40)
@@ -75,7 +96,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
                             () => ResolveApprovalAsync(approved: false));
                     }
                 }),
-            new Hex1bAppOptions());
+            CreateAppOptions());
 
         _requestModelDialogFocus = () =>
         {
@@ -113,7 +134,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
             _state.UserInputText = string.Empty;
             _state.SelectedUserChoiceIndex = 0;
 
-            if (_state.FocusTarget is Hex1bFocusTarget.Approval or Hex1bFocusTarget.UserInput)
+            if (ShouldRestorePromptFocusAfterAgentUpdate(_state.FocusTarget))
             {
                 _state.FocusTarget = Hex1bFocusTarget.Prompt;
                 app.RequestFocus(node => string.Equals(node.MetricName, PromptMetricName, StringComparison.Ordinal));
@@ -169,12 +190,85 @@ public sealed class Hex1bApplicationShell : IApplicationShell
 
     private Hex1b.Widgets.Hex1bWidget BuildTerminalPanel()
     {
-        return new Hex1b.Widgets.BorderWidget(
-            new Hex1b.Widgets.TerminalWidget(_terminalWidgetHandle)
+        var terminalWidget = new Hex1b.Widgets.TerminalWidget(_terminalWidgetHandle)
+        {
+            HeightHint = SizeHint.Fill,
+            WidthHint = SizeHint.Fill,
+            MetricName = TerminalMetricName
+        };
+
+        var selectionOverlay = new Hex1b.Widgets.InteractableWidget(_ =>
+            new Hex1b.Widgets.SurfaceWidget(layerContext =>
+            [
+                layerContext.Layer(ctx =>
+                {
+                    var overlay = TerminalSelectionFormatter.BuildOverlay(layerContext.Width, layerContext.Height, _state.TerminalSelection);
+                    for (var y = 0; y < layerContext.Height; y++)
+                    {
+                        for (var x = 0; x < layerContext.Width; x++)
+                        {
+                            var cell = overlay[y, x];
+                            if (cell.IsTransparent)
+                            {
+                                continue;
+                            }
+
+                            ctx[x, y] = cell;
+                        }
+                    }
+                })
+            ])
             {
                 HeightHint = SizeHint.Fill,
-                WidthHint = SizeHint.Fill,
-                MetricName = TerminalMetricName
+                WidthHint = SizeHint.Fill
+            })
+        {
+            MetricName = TerminalSelectionMetricName,
+            HeightHint = SizeHint.Fill,
+            WidthHint = SizeHint.Fill
+        }
+        .WithInputBindings(bindings =>
+        {
+            bindings.Drag(Hex1b.Input.MouseButton.Left)
+                .Shift()
+                .Action((startX, startY) =>
+                {
+                    _state.TerminalSelection.AnchorX = startX;
+                    _state.TerminalSelection.AnchorY = startY;
+                    _state.TerminalSelection.CurrentX = startX;
+                    _state.TerminalSelection.CurrentY = startY;
+                    _state.TerminalSelection.IsActive = true;
+
+                    return new Hex1b.Input.DragHandler(
+                        (context, deltaX, deltaY) =>
+                        {
+                            _state.TerminalSelection.CurrentX = startX + deltaX;
+                            _state.TerminalSelection.CurrentY = startY + deltaY;
+                            context.Invalidate();
+                        },
+                        context =>
+                        {
+                            var (buffer, width, height) = _terminalWidgetHandle.GetScreenBufferSnapshot();
+                            var selectedText = TerminalSelectionFormatter.ExtractSelectionText(buffer, width, height, _state.TerminalSelection);
+                            if (!string.IsNullOrEmpty(selectedText))
+                            {
+                                context.CopyToClipboard(selectedText);
+                            }
+
+                            _state.TerminalSelection.Clear();
+                            context.Invalidate();
+                        });
+                }, "Select terminal text");
+        });
+
+        return new Hex1b.Widgets.BorderWidget(
+            new Hex1b.Widgets.ZStackWidget([
+                terminalWidget,
+                selectionOverlay
+            ])
+            {
+                HeightHint = SizeHint.Fill,
+                WidthHint = SizeHint.Fill
             })
         {
             HeightHint = SizeHint.Fill,

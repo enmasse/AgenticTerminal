@@ -1,10 +1,12 @@
 using System.Text;
+using AgenticTerminal.Startup;
 using Hex1b;
 
 namespace AgenticTerminal.Terminal;
 
 public sealed class Hex1bPtyTerminalSession : ITerminalSession
 {
+    private static readonly TimeSpan BackchannelDrainDelay = TimeSpan.FromMilliseconds(50);
     private readonly SemaphoreSlim _commandLock = new(1, 1);
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -29,18 +31,21 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
         return text + "\r";
     }
 
-    internal static string BuildWrappedCommandScript(string command, string commandId)
+    internal static string BuildWrappedCommandScript(string command, string commandId, string pipeName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
         ArgumentException.ThrowIfNullOrWhiteSpace(commandId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
 
         var encodedCommand = Convert.ToBase64String(Encoding.UTF8.GetBytes(command));
         return string.Join(' ',
             "$__agenticterminal_command = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('" + encodedCommand + "'));",
             "$__agenticterminal_exit = 0;",
+            "$__agenticterminal_pipe = $null;",
+            "$__agenticterminal_writer = $null;",
             "try { & ([ScriptBlock]::Create($__agenticterminal_command)); if ($LASTEXITCODE -is [int]) { $__agenticterminal_exit = $LASTEXITCODE } }",
             "catch { $__agenticterminal_exit = 1; Write-Host $_; }",
-            "finally { Write-Host ('" + TerminalCommandCapture.CompletionMarkerPrefix + ":" + commandId + ":' + $__agenticterminal_exit) }");
+            "finally { $__agenticterminal_pipe = [System.IO.Pipes.NamedPipeClientStream]::new('.', '" + pipeName + "', [System.IO.Pipes.PipeDirection]::Out); $__agenticterminal_pipe.Connect(5000); $__agenticterminal_writer = [System.IO.StreamWriter]::new($__agenticterminal_pipe, [System.Text.UTF8Encoding]::new($false), 1024, $true); $__agenticterminal_writer.AutoFlush = $true; $__agenticterminal_writer.WriteLine('" + commandId + ":' + $__agenticterminal_exit); if ($null -ne $__agenticterminal_writer) { $__agenticterminal_writer.Dispose() }; if ($null -ne $__agenticterminal_pipe) { $__agenticterminal_pipe.Dispose() } }");
     }
 
     public Hex1bPtyTerminalSession(TerminalSessionStartupOptions? startupOptions = null)
@@ -153,14 +158,28 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
         {
             var commandId = Guid.NewGuid().ToString("N");
             var capture = new TerminalCommandCapture(commandId, command);
+            await using var backchannel = new TerminalCommandBackchannel();
             lock (_syncRoot)
             {
                 _activeCommandCapture = capture;
             }
 
-            var script = BuildWrappedCommandScript(command, commandId);
+            var script = BuildWrappedCommandScript(command, commandId, backchannel.PipeName);
 
             await SendTextAsync(BuildSubmittedInput(script), cancellationToken);
+
+            var completionMessage = await backchannel.ReadMessageAsync(cancellationToken);
+            if (!string.Equals(completionMessage.CommandId, commandId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("The terminal command backchannel reported an unexpected command identifier.");
+            }
+
+            if (BackchannelDrainDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(BackchannelDrainDelay, cancellationToken);
+            }
+
+            capture.TryCompleteFromBackchannel(completionMessage.ExitCode);
             return await capture.Completion.Task.WaitAsync(cancellationToken);
         }
         finally
@@ -325,7 +344,7 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
             "pwsh.exe",
             TerminalSessionStartupArguments.BuildArgumentList(startupOptions),
             Environment.CurrentDirectory,
-            null,
+            AgtExecutableBootstrapper.CreateEnvironmentOverrides(),
             true);
     }
 }

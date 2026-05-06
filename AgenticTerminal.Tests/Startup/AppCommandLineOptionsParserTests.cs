@@ -51,4 +51,15 @@ public sealed class AppCommandLineOptionsParserTests
 
         Assert.Equal("claude-sonnet-4.5", options.CopilotModel);
     }
+
+    [Fact]
+    public void AgtParse_WithScriptMode_UsesPwshCommandInvocation()
+    {
+        var options = AgtCommandLineParser.Parse(["script", "--session", "session-42", "Write-Host", "hi"]);
+
+        Assert.True(options.IsScriptMode);
+        Assert.Equal("session-42", options.SessionId);
+        Assert.Equal("pwsh.exe", options.Command);
+        Assert.Equal(["-NoLogo", "-NoProfile", "-Command", "Write-Host hi"], options.Arguments);
+    }
 }

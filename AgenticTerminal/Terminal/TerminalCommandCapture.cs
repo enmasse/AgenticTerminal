@@ -104,6 +104,22 @@ public sealed class TerminalCommandCapture
         return IsCompleted;
     }
 
+    public bool TryCompleteFromBackchannel(int exitCode)
+    {
+        if (IsCompleted)
+        {
+            return false;
+        }
+
+        var visibleText = SanitizeVisibleText(_buffer.ToString(), flushAll: true);
+        _buffer.Clear();
+        Output += visibleText;
+        ExitCode = exitCode;
+        IsCompleted = true;
+        Completion.TrySetResult(new TerminalCommandResult(_commandText, Output, ExitCode));
+        return true;
+    }
+
     private int FindValidMarkerIndex(string text)
     {
         var searchIndex = 0;

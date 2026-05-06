@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using AgenticTerminal.Startup;
 
 namespace AgenticTerminal.Terminal;
 
@@ -51,6 +52,11 @@ public sealed class HeadlessPowerShellTerminalSession : ITerminalSession
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+
+            foreach (var pair in AgtExecutableBootstrapper.CreateEnvironmentOverrides())
+            {
+                processStartInfo.Environment[pair.Key] = pair.Value;
+            }
 
             _process = new Process
             {

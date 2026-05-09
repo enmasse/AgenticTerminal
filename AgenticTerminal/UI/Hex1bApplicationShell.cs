@@ -195,37 +195,6 @@ public sealed class Hex1bApplicationShell : IApplicationShell
             HeightHint = SizeHint.Fill,
             WidthHint = SizeHint.Fill,
             MetricName = TerminalMetricName
-        };
-
-        var selectionOverlay = new Hex1b.Widgets.InteractableWidget(_ =>
-            new Hex1b.Widgets.SurfaceWidget(layerContext =>
-            [
-                layerContext.Layer(ctx =>
-                {
-                    var overlay = TerminalSelectionFormatter.BuildOverlay(layerContext.Width, layerContext.Height, _state.TerminalSelection);
-                    for (var y = 0; y < layerContext.Height; y++)
-                    {
-                        for (var x = 0; x < layerContext.Width; x++)
-                        {
-                            var cell = overlay[y, x];
-                            if (cell.IsTransparent)
-                            {
-                                continue;
-                            }
-
-                            ctx[x, y] = cell;
-                        }
-                    }
-                })
-            ])
-            {
-                HeightHint = SizeHint.Fill,
-                WidthHint = SizeHint.Fill
-            })
-        {
-            MetricName = TerminalSelectionMetricName,
-            HeightHint = SizeHint.Fill,
-            WidthHint = SizeHint.Fill
         }
         .WithInputBindings(bindings =>
         {
@@ -260,6 +229,32 @@ public sealed class Hex1bApplicationShell : IApplicationShell
                         });
                 }, "Select terminal text");
         });
+
+        var selectionOverlay = new Hex1b.Widgets.SurfaceWidget(layerContext =>
+            [
+                layerContext.Layer(ctx =>
+                {
+                    var overlay = TerminalSelectionFormatter.BuildOverlay(layerContext.Width, layerContext.Height, _state.TerminalSelection);
+                    for (var y = 0; y < layerContext.Height; y++)
+                    {
+                        for (var x = 0; x < layerContext.Width; x++)
+                        {
+                            var cell = overlay[y, x];
+                            if (cell.IsTransparent)
+                            {
+                                continue;
+                            }
+
+                            ctx[x, y] = cell;
+                        }
+                    }
+                })
+            ])
+        {
+            MetricName = TerminalSelectionMetricName,
+            HeightHint = SizeHint.Fill,
+            WidthHint = SizeHint.Fill
+        };
 
         return new Hex1b.Widgets.BorderWidget(
             new Hex1b.Widgets.ZStackWidget([

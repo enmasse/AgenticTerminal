@@ -1,3 +1,8 @@
+using System.Reflection;
+using AgenticTerminal.Agent;
+using AgenticTerminal.Approvals;
+using AgenticTerminal.Persistence;
+using AgenticTerminal.Terminal;
 using AgenticTerminal.UI;
 using Hex1b;
 using Hex1b.Automation;
@@ -18,6 +23,18 @@ public sealed class Hex1bInteractionAutomationTests
 
         await harness.Automator.EnterAsync();
         await harness.Automator.WaitUntilTextAsync("Send count: 1");
+    }
+
+    [Fact]
+    public async Task Terminal_ClickFocus_AllowsTypingIntoTerminalPanel()
+    {
+        await using var harness = await TerminalPanelTypingHarness.StartAsync();
+
+        await harness.Automator.ClickAtAsync(10, 5, MouseButton.Left);
+        await harness.Automator.TypeAsync("abc");
+        await harness.Automator.WaitUntilAsync((Hex1bTerminalSnapshot _) => harness.TerminalSession.SentText == "abc");
+
+        Assert.Equal("abc", harness.TerminalSession.SentText);
     }
 
     [Fact]
@@ -300,5 +317,132 @@ public sealed class Hex1bInteractionAutomationTests
             _app?.Invalidate();
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class TerminalPanelTypingHarness : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource _cancellationTokenSource = new(TimeSpan.FromSeconds(15));
+        private readonly string _workspaceRoot;
+        private Task<int>? _runTask;
+
+        private TerminalPanelTypingHarness(
+            Hex1bTerminal terminal,
+            Hex1bTerminalAutomator automator,
+            RecordingTerminalSession terminalSession,
+            string workspaceRoot)
+        {
+            Terminal = terminal;
+            Automator = automator;
+            TerminalSession = terminalSession;
+            _workspaceRoot = workspaceRoot;
+        }
+
+        public Hex1bTerminal Terminal { get; }
+
+        public Hex1bTerminalAutomator Automator { get; }
+
+        public RecordingTerminalSession TerminalSession { get; }
+
+        public static async Task<TerminalPanelTypingHarness> StartAsync()
+        {
+            var workspaceRoot = Path.Combine(Path.GetTempPath(), "AgenticTerminalTests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(workspaceRoot);
+
+            var terminalSession = new RecordingTerminalSession();
+            var sessionManager = new CopilotAgentSessionManager(
+                new ApprovalQueue(),
+                new ConversationSessionStore(workspaceRoot),
+                terminalSession,
+                workspaceRoot);
+            var shell = new Hex1bApplicationShell(sessionManager, terminalSession);
+
+            var buildTerminalPanelMethod = typeof(Hex1bApplicationShell).GetMethod(
+                "BuildTerminalPanel",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+
+            Assert.NotNull(buildTerminalPanelMethod);
+
+            var terminal = Hex1bTerminal.CreateBuilder()
+                .WithHeadless()
+                .WithDimensions(100, 20)
+                .WithMouse(true)
+                .WithHex1bApp((app, options) =>
+                {
+                    return ctx =>
+                    {
+                        return (Hex1bWidget)buildTerminalPanelMethod!.Invoke(shell, null)!;
+                    };
+                })
+                .Build();
+
+            var harness = new TerminalPanelTypingHarness(
+                terminal,
+                new Hex1bTerminalAutomator(terminal, TimeSpan.FromSeconds(3)),
+                terminalSession,
+                workspaceRoot);
+
+            await terminalSession.StartAsync();
+            harness._runTask = terminal.RunAsync(harness._cancellationTokenSource.Token);
+            await harness.Automator.WaitAsync(100);
+            return harness;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                if (_runTask is not null)
+                {
+                    _cancellationTokenSource.Cancel();
+                    await _runTask;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                _cancellationTokenSource.Dispose();
+                await TerminalSession.DisposeAsync();
+                await Terminal.DisposeAsync();
+                if (Directory.Exists(_workspaceRoot))
+                {
+                    Directory.Delete(_workspaceRoot, recursive: true);
+                }
+            }
+        }
+    }
+
+    private sealed class RecordingTerminalSession : ITerminalSession
+    {
+        private readonly TerminalScreenBuffer _displayState = new(80, 10);
+
+        public event Action<TerminalOutputChunk>? OutputReceived;
+
+        public ITerminalDisplayState DisplayState => _displayState;
+
+        public string SentText { get; private set; } = string.Empty;
+
+        public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task SendTextAsync(string text, CancellationToken cancellationToken = default)
+        {
+            SentText += text;
+            OutputReceived?.Invoke(new TerminalOutputChunk(text, false, DateTimeOffset.UtcNow));
+            return Task.CompletedTask;
+        }
+
+        public Task SubmitInputAsync(string input, CancellationToken cancellationToken = default)
+            => SendTextAsync(input + "\r", cancellationToken);
+
+        public Task ResizeAsync(int columns, int rows, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<string> CaptureSnapshotAsync(TerminalSnapshotOptions? options = null, CancellationToken cancellationToken = default)
+            => Task.FromResult(string.Empty);
+
+        public Task<TerminalCommandResult> ExecuteCommandAsync(string command, CancellationToken cancellationToken = default)
+            => Task.FromResult(new TerminalCommandResult(command, string.Empty, 0));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

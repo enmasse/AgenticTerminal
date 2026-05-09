@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="AgenticTerminal.Tests/AgenticTerminal.Tests.csproj" />
   <Project Path="AgenticTerminal/AgenticTerminal.csproj" />
+  <Project Path="BenchmarkSuite1/BenchmarkSuite1.csproj" />
 </Solution>

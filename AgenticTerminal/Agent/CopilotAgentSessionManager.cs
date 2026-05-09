@@ -16,6 +16,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
 {
     private static readonly TerminalSnapshotOptions SnapshotOptions = new(MaxLines: 12, MaxCharacters: 2000);
     private static readonly TimeSpan DefaultFirstTokenTimeoutDuration = TimeSpan.FromSeconds(15);
+    private const string SessionStartingStatusText = "Copilot is still starting. Wait for the session to become ready.";
     private static readonly string[] AllowedToolNames =
     [
         "powershell",
@@ -117,6 +118,13 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
                 return;
             }
 
+            StatusText = "Starting terminal...";
+            OnStateChanged();
+            await _terminalSession.StartAsync(cancellationToken);
+
+            StatusText = "Starting Copilot...";
+            OnStateChanged();
+
             _client = new CopilotClient(new CopilotClientOptions
             {
                 Cwd = _workingDirectory,
@@ -125,8 +133,9 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
             });
 
             await _client.StartAsync();
-            await _terminalSession.StartAsync(cancellationToken);
 
+            StatusText = "Loading sessions...";
+            OnStateChanged();
             SavedSessions = await _conversationSessionStore.ListSessionsAsync(cancellationToken);
 
             if (SavedSessions.Count > 0)
@@ -153,7 +162,7 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         {
             if (_session is null)
             {
-                StatusText = "The Copilot session has not been initialized.";
+                StatusText = SessionStartingStatusText;
                 OnStateChanged();
                 return false;
             }
@@ -205,6 +214,13 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         await _sessionLock.WaitAsync(cancellationToken);
         try
         {
+            if (_client is null)
+            {
+                StatusText = SessionStartingStatusText;
+                OnStateChanged();
+                return;
+            }
+
             await CreateNewSessionCoreAsync(cancellationToken);
         }
         finally
@@ -220,6 +236,13 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
         await _sessionLock.WaitAsync(cancellationToken);
         try
         {
+            if (_client is null)
+            {
+                StatusText = SessionStartingStatusText;
+                OnStateChanged();
+                return;
+            }
+
             await OpenStoredSessionCoreAsync(sessionId, cancellationToken);
         }
         finally
@@ -363,6 +386,14 @@ public sealed class CopilotAgentSessionManager : IAsyncDisposable
 
         await _terminalSession.DisposeAsync();
         _sessionLock.Dispose();
+    }
+
+    internal void HandleInitializationFailure(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        StatusText = exception.Message;
+        OnStateChanged();
     }
 
     private async Task ReplaceSessionAsync(IReadOnlyList<ConversationMessage> existingMessages, CancellationToken cancellationToken)

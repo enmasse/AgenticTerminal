@@ -1,7 +1,7 @@
 # Copilot Instructions
 
 ## Project Guidelines
-- User prefers test-driven work when implementing features in this repository.
+- User prefers test-driven work when implementing features in this repository. Avoid modifying production code when asked only to analyze; when implementing, prefer test-driven changes.
 - User expects verification of workspace structure and does not want claims that no test project exists without deeper checks.
 - When gathering requirements for AgenticTerminal features, make reasonable assumptions and avoid pushing too many low-level implementation decisions back to the user; details can be refined later.
 - For AgenticTerminal UI, user prefers a simple left-right split with text-based dialogs and no fake button-heavy controls. User dislikes fake modal dialogs in AgenticTerminal UI and prefers they be removed instead of interrupting terminal interaction.

@@ -73,23 +73,23 @@ internal static class AppHost
                     await Task.CompletedTask;
                 }));
 
-        try
-        {
-            await sessionManager.InitializeAsync(startupCancellationToken);
-        }
-        catch (OperationCanceledException) when (options.RunSmokeTest)
-        {
-            Console.Error.WriteLine($"Smoke test timed out during startup after {options.SmokeTestTimeoutSeconds} seconds.");
-            return 1;
-        }
-        catch (Exception exception)
-        {
-            Console.Error.WriteLine(exception.Message);
-            return 1;
-        }
-
         if (options.RunSmokeTest)
         {
+            try
+            {
+                await sessionManager.InitializeAsync(startupCancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                Console.Error.WriteLine($"Smoke test timed out during startup after {options.SmokeTestTimeoutSeconds} seconds.");
+                return 1;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception.Message);
+                return 1;
+            }
+
             Console.WriteLine("Smoke test initialized.");
 
             try
@@ -114,7 +114,20 @@ internal static class AppHost
             sessionManager,
             terminalSession,
             new ApplicationShellOptions(configuration.ShowDebugPanelByDefault ?? false));
-        await applicationShell.RunAsync(startupCancellationToken);
-        return 0;
+
+        try
+        {
+            await InteractiveStartupCoordinator.RunAsync(
+                sessionManager.InitializeAsync,
+                applicationShell.RunAsync,
+                sessionManager.HandleInitializationFailure,
+                startupCancellationToken);
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+            return 1;
+        }
     }
 }

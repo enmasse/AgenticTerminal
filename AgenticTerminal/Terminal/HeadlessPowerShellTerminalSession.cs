@@ -10,7 +10,7 @@ public sealed class HeadlessPowerShellTerminalSession : ITerminalSession
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly object _syncRoot = new();
-    private readonly XTermTerminalEmulator _emulator = new(120, 40);
+    private readonly Hex1bTerminalEmulator _emulator = new(120, 40);
     private readonly TerminalSessionStartupOptions _startupOptions;
     private readonly CancellationTokenSource _pumpCancellationSource = new();
     private Process? _process;

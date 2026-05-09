@@ -222,7 +222,7 @@ public sealed class Hex1bInteractionAutomationTests
                     HeightHint = Hex1b.Layout.SizeHint.Content,
                     WidthHint = Hex1b.Layout.SizeHint.Fill
                 }
-                .WithInputBindings(bindings =>
+                .InputBindings(bindings =>
                 {
                     ConfigureGlobalBindings(bindings);
                     bindings.Key(Hex1bKey.F1).Triggers(TextBoxWidget.InsertNewline, () =>
@@ -257,7 +257,7 @@ public sealed class Hex1bInteractionAutomationTests
                             _app?.Invalidate();
                         })
                         .OnItemActivated(async args => await ApplySelectedModelAsync())
-                        .WithInputBindings(bindings =>
+                        .InputBindings(bindings =>
                         {
                             Hex1bShellInputBindings.ConfigureModelDialogBindings(
                                 bindings,

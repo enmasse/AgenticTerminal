@@ -167,7 +167,7 @@ public sealed class Hex1bDeadKeyReproTests
                     HeightHint = Hex1b.Layout.SizeHint.Content,
                     WidthHint = Hex1b.Layout.SizeHint.Fill
                 }
-                .WithInputBindings(bindings =>
+                .InputBindings(bindings =>
                 {
                     bindings.Key(Hex1bKey.Enter).Action(() =>
                     {

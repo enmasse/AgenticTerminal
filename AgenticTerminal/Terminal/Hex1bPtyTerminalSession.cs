@@ -7,6 +7,9 @@ namespace AgenticTerminal.Terminal;
 public sealed class Hex1bPtyTerminalSession : ITerminalSession
 {
     private static readonly TimeSpan BackchannelDrainDelay = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan ResizeDebounceDelay = TimeSpan.FromMilliseconds(150);
+    private const int DefaultColumns = 120;
+    private const int DefaultRows = 40;
     private readonly SemaphoreSlim _commandLock = new(1, 1);
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -14,16 +17,24 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
     private readonly Encoding _encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
     private readonly Decoder _decoder = Encoding.UTF8.GetDecoder();
     private readonly CancellationTokenSource _pumpCancellationSource = new();
-    private readonly XTermTerminalEmulator _emulator = new(120, 40);
+    private readonly Hex1bTerminalEmulator _emulator;
     private readonly TerminalProcessLaunchConfiguration _launchConfiguration;
     private readonly TerminalSessionStartupOptions _startupOptions;
     private Hex1bTerminalChildProcess? _childProcess;
     private Task? _outputPump;
     private TerminalCommandCapture? _activeCommandCapture;
-    private int _columns = 120;
-    private int _rows = 40;
+    private int _columns;
+    private int _rows;
+    private bool _hasExplicitResizeSinceStart;
     private bool _disposed;
     private bool _started;
+    private CancellationTokenSource? _pendingResizeCts;
+
+    private static readonly string DiagLogPath = Path.Combine(Path.GetTempPath(), "AgenticTerminal.diag.log");
+    private static void DiagLog(string message)
+    {
+        try { File.AppendAllText(DiagLogPath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n"); } catch { }
+    }
 
     internal static string BuildSubmittedInput(string text)
     {
@@ -51,6 +62,18 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
         return $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
     }
 
+    internal static bool ShouldSkipResize(
+        int currentColumns,
+        int currentRows,
+        int requestedColumns,
+        int requestedRows,
+        bool hasExplicitResizeSinceStart)
+    {
+        return hasExplicitResizeSinceStart
+            && requestedColumns == currentColumns
+            && requestedRows == currentRows;
+    }
+
     public Hex1bPtyTerminalSession(TerminalSessionStartupOptions? startupOptions = null)
         : this(startupOptions ?? new TerminalSessionStartupOptions(), CreateDefaultLaunchConfiguration(startupOptions ?? new TerminalSessionStartupOptions()))
     {
@@ -60,6 +83,9 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
     {
         _startupOptions = startupOptions;
         _launchConfiguration = launchConfiguration;
+        _columns = startupOptions.InitialColumns is > 0 ? startupOptions.InitialColumns.Value : DefaultColumns;
+        _rows = startupOptions.InitialRows is > 0 ? startupOptions.InitialRows.Value : DefaultRows;
+        _emulator = new Hex1bTerminalEmulator(_columns, _rows);
     }
 
     public event Action<TerminalOutputChunk>? OutputReceived;
@@ -84,6 +110,8 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
                 _launchConfiguration.InheritEnvironment,
                 _columns,
                 _rows);
+
+            DiagLog($"StartAsync: launching PTY with ({_columns},{_rows})");
 
             await _childProcess.StartAsync(cancellationToken);
             _outputPump = PumpOutputAsync(_pumpCancellationSource.Token);
@@ -124,21 +152,50 @@ public sealed class Hex1bPtyTerminalSession : ITerminalSession
             return;
         }
 
-        await EnsureStartedAsync(cancellationToken);
-
-        if (columns == _columns && rows == _rows)
+        if (!_started)
         {
+            _columns = columns;
+            _rows = rows;
+
+            lock (_syncRoot)
+            {
+                _emulator.Resize(columns, rows);
+            }
+
+            DiagLog($"ResizeAsync pre-start: stored ({columns},{rows})");
             return;
         }
 
-        await _childProcess!.ResizeAsync(columns, rows, cancellationToken);
-        _columns = columns;
-        _rows = rows;
-
-        lock (_syncRoot)
+        if (ShouldSkipResize(_columns, _rows, columns, rows, _hasExplicitResizeSinceStart))
         {
-            _emulator.Resize(columns, rows);
+            DiagLog($"ResizeAsync post-start: skipped ({columns},{rows}) current=({_columns},{_rows}) hasExplicit={_hasExplicitResizeSinceStart}");
+            return;
         }
+
+        DiagLog($"ResizeAsync post-start: debouncing ({_columns},{_rows}) -> ({columns},{rows})");
+        _pendingResizeCts?.Cancel();
+        _pendingResizeCts = new CancellationTokenSource();
+        var deferred = _pendingResizeCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(ResizeDebounceDelay, deferred);
+                DiagLog($"ResizeAsync post-start: applying ({columns},{rows})");
+                await _childProcess!.ResizeAsync(columns, rows, CancellationToken.None);
+                _hasExplicitResizeSinceStart = true;
+                _columns = columns;
+                _rows = rows;
+                lock (_syncRoot)
+                {
+                    _emulator.Resize(columns, rows);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                DiagLog($"ResizeAsync post-start: debounce cancelled ({columns},{rows})");
+            }
+        }, CancellationToken.None);
     }
 
     public async Task<string> CaptureSnapshotAsync(TerminalSnapshotOptions? options = null, CancellationToken cancellationToken = default)

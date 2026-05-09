@@ -40,6 +40,64 @@ public sealed class Hex1bPtyTerminalSessionTests
     }
 
     [Fact]
+    public void Constructor_WithInitialDimensions_UsesStartupDimensionsForDisplayState()
+    {
+        var session = new Hex1bPtyTerminalSession(new TerminalSessionStartupOptions(
+            TerminalSessionMode.InteractivePseudoConsole,
+            SuppressPrompt: false,
+            LoadUserProfile: true,
+            InitialColumns: 132,
+            InitialRows: 48));
+
+        Assert.Equal(132, session.DisplayState.Columns);
+        Assert.Equal(48, session.DisplayState.Rows);
+    }
+
+    [Fact]
+    public async Task ResizeAsync_BeforeStart_UpdatesPendingDimensionsWithoutStartingSession()
+    {
+        var session = CreateSession();
+
+        try
+        {
+            await session.ResizeAsync(100, 30, CancellationToken.None);
+
+            Assert.Equal(100, session.DisplayState.Columns);
+            Assert.Equal(30, session.DisplayState.Rows);
+
+            var startedField = typeof(Hex1bPtyTerminalSession).GetField("_started", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(startedField);
+            Assert.False((bool)startedField!.GetValue(session)!);
+        }
+        finally
+        {
+            await DisposeSessionAsync(session);
+        }
+    }
+
+    [Fact]
+    public void ShouldSkipResize_WithMatchingDimensionsBeforeFirstExplicitResize_ReturnsFalse()
+    {
+        Assert.False(Hex1bPtyTerminalSession.ShouldSkipResize(
+            currentColumns: 132,
+            currentRows: 48,
+            requestedColumns: 132,
+            requestedRows: 48,
+            hasExplicitResizeSinceStart: false));
+    }
+
+    [Fact]
+    public void ShouldSkipResize_WithMatchingDimensionsAfterFirstExplicitResize_ReturnsTrue()
+    {
+        Assert.True(Hex1bPtyTerminalSession.ShouldSkipResize(
+            currentColumns: 132,
+            currentRows: 48,
+            requestedColumns: 132,
+            requestedRows: 48,
+            hasExplicitResizeSinceStart: true));
+    }
+
+    [Fact]
     public async Task SendTextAsync_ForwardsTypedInputToFakeShell()
     {
         KillLingeringTestHostProcesses();

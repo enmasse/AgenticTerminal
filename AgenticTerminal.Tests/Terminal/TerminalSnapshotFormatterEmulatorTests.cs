@@ -5,9 +5,9 @@ namespace AgenticTerminal.Tests.Terminal;
 public sealed class TerminalSnapshotFormatterEmulatorTests
 {
     [Fact]
-    public void Format_WithXTermTerminalEmulator_IncludesCursorAndVisibleLines()
+    public void Format_WithHex1bTerminalEmulator_IncludesCursorAndVisibleLines()
     {
-        var emulator = new XTermTerminalEmulator(columns: 12, rows: 4);
+        var emulator = new Hex1bTerminalEmulator(columns: 12, rows: 4);
         emulator.Write("PS> ls\r\none\r\ntwo");
 
         var snapshot = TerminalSnapshotFormatter.Format(emulator, maxLines: 4, maxCharacters: 200);

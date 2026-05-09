@@ -8,6 +8,48 @@ namespace AgenticTerminal.Startup;
 
 internal static class AppHost
 {
+    internal static Func<CancellationToken, Task> CreateInteractiveInitializationAsync(
+        IApplicationShell applicationShell,
+        Func<CancellationToken, Task> initializeAgentAsync)
+    {
+        ArgumentNullException.ThrowIfNull(applicationShell);
+        ArgumentNullException.ThrowIfNull(initializeAgentAsync);
+
+        return async cancellationToken =>
+        {
+            await applicationShell.WaitUntilReadyForInitializationAsync(cancellationToken);
+            await initializeAgentAsync(cancellationToken);
+        };
+    }
+
+    internal static TerminalSessionStartupOptions CreateTerminalStartupOptions(bool runSmokeTest, int hostColumns, int hostRows)
+    {
+        if (runSmokeTest)
+        {
+            return new TerminalSessionStartupOptions(TerminalSessionMode.HeadlessPipe, LoadUserProfile: false);
+        }
+
+        return new TerminalSessionStartupOptions(
+            TerminalSessionMode.InteractivePseudoConsole,
+            LoadUserProfile: true);
+    }
+
+    internal static (int Columns, int Rows) GetHostTerminalDimensions()
+    {
+        try
+        {
+            return (Console.WindowWidth, Console.WindowHeight);
+        }
+        catch (IOException)
+        {
+            return (0, 0);
+        }
+        catch (InvalidOperationException)
+        {
+            return (0, 0);
+        }
+    }
+
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
     {
         var invokedExecutableName = Environment.GetCommandLineArgs().FirstOrDefault();
@@ -44,9 +86,8 @@ internal static class AppHost
 
         var approvalQueue = new ApprovalQueue();
         var conversationSessionStore = new ConversationSessionStore(appDataPath);
-        var terminalStartupOptions = options.RunSmokeTest
-            ? new TerminalSessionStartupOptions(TerminalSessionMode.HeadlessPipe, LoadUserProfile: false)
-            : new TerminalSessionStartupOptions(TerminalSessionMode.InteractivePseudoConsole, LoadUserProfile: true);
+        var (hostColumns, hostRows) = GetHostTerminalDimensions();
+        var terminalStartupOptions = CreateTerminalStartupOptions(options.RunSmokeTest, hostColumns, hostRows);
         var terminalSession = TerminalSessionFactory.Create(terminalStartupOptions);
         using var smokeTestCancellationTokenSource = options.RunSmokeTest
             ? new CancellationTokenSource(TimeSpan.FromSeconds(options.SmokeTestTimeoutSeconds))
@@ -117,8 +158,9 @@ internal static class AppHost
 
         try
         {
+            var initializeAgentAsync = CreateInteractiveInitializationAsync(applicationShell, sessionManager.InitializeAsync);
             await InteractiveStartupCoordinator.RunAsync(
-                sessionManager.InitializeAsync,
+                initializeAgentAsync,
                 applicationShell.RunAsync,
                 sessionManager.HandleInitializationFailure,
                 startupCancellationToken);

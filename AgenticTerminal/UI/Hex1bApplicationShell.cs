@@ -36,6 +36,8 @@ public sealed class Hex1bApplicationShell : IApplicationShell
     private readonly Hex1bShellState _state = new();
     private readonly Hex1bTerminalSessionWorkloadAdapter _terminalWorkloadAdapter;
     private readonly TerminalWidgetHandle _terminalWidgetHandle;
+    private readonly TaskCompletionSource _layoutReadyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _acceptingLayoutResizes;
     private WindowHandle? _modelDialogWindow;
     private Action? _requestModelDialogFocus;
 
@@ -47,11 +49,57 @@ public sealed class Hex1bApplicationShell : IApplicationShell
         };
     }
 
+    public Task WaitUntilReadyForInitializationAsync(CancellationToken cancellationToken = default)
+    {
+        return _layoutReadyTcs.Task.WaitAsync(cancellationToken);
+    }
+
     internal static Hex1bTerminalBuilder ConfigureTerminalBuilder(Hex1bTerminalBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
         return builder.WithMouse(true);
+    }
+
+    internal static Task SynchronizeTerminalSessionSizeAsync(
+        ITerminalSession terminalSession,
+        int columns,
+        int rows,
+        bool forceEquivalentResize = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(terminalSession);
+
+        if (!ShouldSynchronizeTerminalSessionSize(terminalSession.DisplayState, columns, rows, null, forceEquivalentResize))
+        {
+            return Task.CompletedTask;
+        }
+
+        return terminalSession.ResizeAsync(columns, rows, cancellationToken);
+    }
+
+    internal static bool ShouldSynchronizeTerminalSessionSize(
+        ITerminalDisplayState displayState,
+        int columns,
+        int rows,
+        (int Columns, int Rows)? pendingTerminalResize,
+        bool forceEquivalentResize = false)
+    {
+        ArgumentNullException.ThrowIfNull(displayState);
+
+        if (columns <= 0 || rows <= 0)
+        {
+            return false;
+        }
+
+        if (pendingTerminalResize is { Columns: var pendingColumns, Rows: var pendingRows }
+            && pendingColumns == columns
+            && pendingRows == rows)
+        {
+            return false;
+        }
+
+        return forceEquivalentResize || displayState.Columns != columns || displayState.Rows != rows;
     }
 
     public Hex1bApplicationShell(
@@ -69,10 +117,28 @@ public sealed class Hex1bApplicationShell : IApplicationShell
         _ = ConfigureTerminalBuilder(new Hex1bTerminalBuilder())
             .WithWorkload(_terminalWorkloadAdapter)
             .WithTerminalWidget(out terminalWidgetHandle)
-            .WithDimensions(120, 40)
             .WithScrollback(1000, _ => { })
             .Build();
         _terminalWidgetHandle = terminalWidgetHandle;
+        _terminalWidgetHandle.Resized += HandleTerminalWidgetResized;
+    }
+
+    private static readonly string DiagLogPath = Path.Combine(Path.GetTempPath(), "AgenticTerminal.diag.log");
+
+    private static void DiagLog(string message)
+    {
+        try { File.AppendAllText(DiagLogPath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n"); } catch { }
+    }
+
+    private void HandleTerminalWidgetResized(int columns, int rows)
+    {
+        DiagLog($"Resized({columns},{rows}) widgetW={_terminalWidgetHandle.Width} widgetH={_terminalWidgetHandle.Height} acceptingLayoutResizes={_acceptingLayoutResizes}");
+        if (_acceptingLayoutResizes && columns > 0 && rows > 0)
+        {
+            _ = _terminalSession.ResizeAsync(columns, rows);
+            _layoutReadyTcs.TrySetResult();
+            DiagLog($"TCS fired with ({columns},{rows})");
+        }
     }
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
@@ -85,7 +151,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
             _ =>
                 _.WindowPanel()
                 .Background(windowPanel => BuildApplicationContent(windowPanel))
-                .WithInputBindings(bindings =>
+                .InputBindings(bindings =>
                 {
                     ConfigureGlobalBindings(bindings);
                     if (_sessionManager.PendingApproval is not null)
@@ -146,6 +212,8 @@ public sealed class Hex1bApplicationShell : IApplicationShell
 
         try
         {
+            _acceptingLayoutResizes = true;
+            DiagLog("_acceptingLayoutResizes = true, about to call app.RunAsync");
             await app.RunAsync(cancellationToken);
         }
         finally
@@ -153,6 +221,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
             _requestModelDialogFocus = null;
             Console.Title = originalWindowTitle;
             _sessionManager.StateChanged -= HandleSessionManagerStateChanged;
+            _terminalWidgetHandle.Resized -= HandleTerminalWidgetResized;
             await _terminalWidgetHandle.DisposeAsync();
             await _terminalWorkloadAdapter.DisposeAsync();
         }
@@ -196,7 +265,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
             WidthHint = SizeHint.Fill,
             MetricName = TerminalMetricName
         }
-        .WithInputBindings(bindings =>
+        .InputBindings(bindings =>
         {
             bindings.Drag(Hex1b.Input.MouseButton.Left)
                 .Shift()
@@ -312,7 +381,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
                         _state.FocusTarget = Hex1bFocusTarget.Approval;
                     }
                 })
-                .WithInputBindings(bindings =>
+                .InputBindings(bindings =>
                 {
                     Hex1bShellInputBindings.ConfigureApprovalBindings(
                         bindings,
@@ -346,7 +415,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
                 _state.FocusTarget = Hex1bFocusTarget.Prompt;
                 _state.PromptText = args.NewText;
             })
-            .WithInputBindings(bindings =>
+            .InputBindings(bindings =>
             {
                 Hex1bShellInputBindings.ConfigurePromptBindings(bindings, () => SendPromptAsync(_state.PromptText));
             });
@@ -519,7 +588,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
                     _state.FocusTarget = Hex1bFocusTarget.UserInput;
                     _state.UserInputText = args.NewText;
                 })
-                .WithInputBindings(bindings =>
+                .InputBindings(bindings =>
                 {
                     Hex1bShellInputBindings.ConfigureUserInputBindings(
                         bindings,
@@ -603,7 +672,7 @@ public sealed class Hex1bApplicationShell : IApplicationShell
             }
             .OnSelectionChanged(args => _state.SelectedModelIndex = args.SelectedIndex)
             .OnItemActivated(async args => await ChangeModelFromDialogAsync(context.Window, args.ActivatedIndex, args.CancellationToken))
-            .WithInputBindings(bindings =>
+            .InputBindings(bindings =>
             {
                 Hex1bShellInputBindings.ConfigureModelDialogBindings(
                     bindings,

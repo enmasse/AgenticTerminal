@@ -13,7 +13,7 @@
 
   <ItemGroup>
     <PackageReference Include="GitHub.Copilot.SDK" Version="0.3.0" />
-    <PackageReference Include="Hex1b" Version="0.1.0-pr.9.24833090401.4bd3521.2" />
+    <PackageReference Include="Hex1b" Version="0.1.0-pr.12.25600116924.bb0e89e.2" />
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.5.0" />
     <PackageReference Include="protobuf-net" Version="3.2.56" />
   </ItemGroup>

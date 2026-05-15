@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO.Pipes;
-using ProtoBuf;
 
 namespace AgenticTerminal.Terminal;
 
@@ -214,7 +213,7 @@ internal sealed class AgentCommandBackchannelSession : IAsyncDisposable, IDispos
             }
 
             using var memoryStream = new MemoryStream(payload, writable: false);
-            var backchannelEvent = Serializer.Deserialize<AgentCommandBackchannelEvent>(memoryStream);
+            var backchannelEvent = AgentCommandBackchannelEvent.Parser.ParseFrom(memoryStream);
             ObserveEvent(backchannelEvent);
         }
     }

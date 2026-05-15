@@ -354,7 +354,7 @@ public sealed class Hex1bInteractionAutomationTests
                 new ConversationSessionStore(workspaceRoot),
                 terminalSession,
                 workspaceRoot);
-            var shell = new Hex1bApplicationShell(sessionManager, terminalSession);
+            var shell = new Hex1bApplicationShell(sessionManager, terminalSession, new AgentPanelFactory(sessionManager));
 
             var buildTerminalPanelMethod = typeof(Hex1bApplicationShell).GetMethod(
                 "BuildTerminalPanel",

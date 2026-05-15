@@ -51,7 +51,7 @@ public sealed class Hex1bApplicationShellTests
         var options = new ApplicationShellOptions(ShowDebugPanelByDefault: true);
 
         // Act
-        var shell = new Hex1bApplicationShell(sessionManager, mockTerminalSession.Object, options);
+        var shell = new Hex1bApplicationShell(sessionManager, mockTerminalSession.Object, new AgentPanelFactory(sessionManager), options);
 
         // Assert
         Assert.NotNull(shell);
@@ -65,7 +65,7 @@ public sealed class Hex1bApplicationShellTests
         var options = new ApplicationShellOptions(ShowDebugPanelByDefault: false);
 
         // Act
-        var shell = new Hex1bApplicationShell(sessionManager, mockTerminalSession.Object, options);
+        var shell = new Hex1bApplicationShell(sessionManager, mockTerminalSession.Object, new AgentPanelFactory(sessionManager), options);
 
         // Assert
         Assert.NotNull(shell);

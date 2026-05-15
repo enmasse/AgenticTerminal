@@ -3,6 +3,7 @@ using AgenticTerminal.Agent;
 using AgenticTerminal.Approvals;
 using AgenticTerminal.Persistence;
 using GitHub.Copilot.SDK;
+using ConversationMessage = AgenticTerminal.Persistence.ConversationMessage;
 
 namespace AgenticTerminal.UI;
 

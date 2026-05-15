@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+option csharp_namespace = "AgenticTerminal.Terminal";
+
+package backchannel;
+
+enum AgentCommandBackchannelEventType {
+  Unknown = 0;
+  Started = 1;
+  Completed = 2;
+}
+
+message AgentCommandBackchannelEvent {
+  string session_id = 1;
+  string command_id = 2;
+  AgentCommandBackchannelEventType event_type = 3;
+  string command_text = 4;
+  int32 process_id = 5;
+  int64 started_at_unix_time_milliseconds = 6;
+  int64 completed_at_unix_time_milliseconds = 7;
+  int32 exit_code = 8;
+  string standard_output_tail = 9;
+  string standard_error_tail = 10;
+}

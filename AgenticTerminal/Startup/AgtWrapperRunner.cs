@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
 using AgenticTerminal.Terminal;
-using ProtoBuf;
+using Google.Protobuf;
 
 namespace AgenticTerminal.Startup;
 
@@ -181,9 +181,7 @@ internal static class AgtWrapperRunner
 
         public async Task SendAsync(AgentCommandBackchannelEvent backchannelEvent, CancellationToken cancellationToken)
         {
-            using var payloadStream = new MemoryStream();
-            Serializer.Serialize(payloadStream, backchannelEvent);
-            var payload = payloadStream.ToArray();
+            var payload = backchannelEvent.ToByteArray();
             var lengthBuffer = new byte[sizeof(int)];
             BinaryPrimitives.WriteInt32LittleEndian(lengthBuffer, payload.Length);
             await _stream.WriteAsync(lengthBuffer, cancellationToken);

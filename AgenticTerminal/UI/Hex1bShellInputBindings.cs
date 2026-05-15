@@ -14,7 +14,8 @@ internal static class Hex1bShellInputBindings
         Func<Task> createNewSessionAsync,
         Action shrinkTerminalPane,
         Action growTerminalPane,
-        Action<InputBindingActionContext> requestQuit)
+        Action<InputBindingActionContext> requestQuit,
+        Func<CancellationToken, Task>? toggleAgentPanel = null)
     {
         bindings.Key(Hex1bKey.F7).Global().OverridesCapture().Action(focusTerminal, "Focus terminal");
         bindings.Key(Hex1bKey.F8).Global().OverridesCapture().Action(focusPrompt, "Focus prompt");
@@ -25,6 +26,13 @@ internal static class Hex1bShellInputBindings
         bindings.Ctrl().Global().OverridesCapture().Key(Hex1bKey.LeftArrow).Action(shrinkTerminalPane, "Shrink terminal pane");
         bindings.Ctrl().Global().OverridesCapture().Key(Hex1bKey.RightArrow).Action(growTerminalPane, "Grow terminal pane");
         bindings.Key(Hex1bKey.F10).Global().OverridesCapture().Action(requestQuit, "Quit");
+
+        if (toggleAgentPanel is not null)
+        {
+            bindings.Key(Hex1bKey.F5).Global().OverridesCapture().Action(
+                async ctx => await toggleAgentPanel(ctx.CancellationToken),
+                "Toggle agent panel (TUI / Avalonia)");
+        }
     }
 
     public static void ConfigureApprovalBindings(

@@ -1,0 +1,147 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:AgenticTerminal.UI"
+             x:Class="AgenticTerminal.UI.AgentPanelView"
+             x:DataType="ui:AgentPanelViewModel"
+             Background="#141414">
+
+  <UserControl.Resources>
+    <ui:RoleToBackgroundConverter x:Key="RoleBgConverter" />
+    <ui:RoleToForegroundConverter x:Key="RoleFgConverter" />
+    <ui:RoleToAlignmentConverter x:Key="RoleAlignConverter" />
+    <ui:NullToVisibilityConverter x:Key="NullToVisibility" />
+  </UserControl.Resources>
+
+  <DockPanel Margin="8">
+
+    <!-- Status bar -->
+    <TextBlock DockPanel.Dock="Bottom"
+               Text="{Binding StatusText}"
+               Foreground="#888"
+               FontFamily="Cascadia Code,Consolas,monospace"
+               FontSize="12"
+               Margin="0,4,0,0" />
+
+    <!-- Approval panel -->
+    <Border DockPanel.Dock="Bottom"
+            IsVisible="{Binding PendingApproval, Converter={StaticResource NullToVisibility}}"
+            Background="#1a0e00"
+            BorderBrush="Orange"
+            BorderThickness="1"
+            CornerRadius="4"
+            Padding="8"
+            Margin="0,4,0,0">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Bottom"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Spacing="8"
+                    Margin="0,6,0,0">
+          <Button Content="Approve (Y)"
+                  Background="#005000"
+                  Foreground="White"
+                  Command="{Binding ApproveCommand}" />
+          <Button Content="Deny (N)"
+                  Background="#780000"
+                  Foreground="White"
+                  Command="{Binding DenyCommand}" />
+        </StackPanel>
+        <TextBlock Text="{Binding PendingApproval.CommandText}"
+                   Foreground="Orange"
+                   FontFamily="Cascadia Code,Consolas,monospace"
+                   FontSize="13"
+                   TextWrapping="Wrap" />
+      </DockPanel>
+    </Border>
+
+    <!-- Agent user-input request -->
+    <Border DockPanel.Dock="Bottom"
+            IsVisible="{Binding PendingUserInputRequest, Converter={StaticResource NullToVisibility}}"
+            Background="#0d0d1a"
+            BorderBrush="#55f"
+            BorderThickness="1"
+            CornerRadius="4"
+            Padding="8"
+            Margin="0,4,0,0">
+      <TextBlock Text="{Binding PendingUserInputRequest.Question}"
+                 Foreground="#aaf"
+                 FontFamily="Cascadia Code,Consolas,monospace"
+                 FontSize="13"
+                 TextWrapping="Wrap" />
+    </Border>
+
+    <!-- Prompt input -->
+    <Border DockPanel.Dock="Bottom"
+            BorderBrush="#444"
+            BorderThickness="1"
+            CornerRadius="4"
+            Margin="0,4,0,0">
+      <DockPanel>
+        <Button DockPanel.Dock="Right"
+                Content="Send"
+                VerticalAlignment="Bottom"
+                Margin="4,0,0,0"
+                Command="{Binding SendPromptCommand}" />
+        <TextBox Text="{Binding PromptText}"
+                 AcceptsReturn="True"
+                 Height="72"
+                 FontFamily="Cascadia Code,Consolas,monospace"
+                 FontSize="13"
+                 Background="#1e1e1e"
+                 Foreground="White"
+                 Watermark="Enter a prompt… (Ctrl+Enter to send)"
+                 x:Name="PromptBox" />
+      </DockPanel>
+    </Border>
+
+    <!-- Tool activity -->
+    <Border DockPanel.Dock="Bottom"
+            IsVisible="{Binding CurrentToolActivity, Converter={StaticResource NullToVisibility}}"
+            Background="#0d1a0d"
+            BorderBrush="#2a5"
+            BorderThickness="1"
+            CornerRadius="4"
+            Padding="6"
+            Margin="0,4,0,0">
+      <TextBlock FontFamily="Cascadia Code,Consolas,monospace"
+                 FontSize="12"
+                 Foreground="#4d4"
+                 TextWrapping="Wrap">
+        <Run Text="⚙ " />
+        <Run Text="{Binding CurrentToolActivity.DisplayName}" />
+        <Run Text=" — " />
+        <Run Text="{Binding CurrentToolActivity.ArgumentsSummary}" />
+      </TextBlock>
+    </Border>
+
+    <!-- Conversation history -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+      <ItemsControl ItemsSource="{Binding MessageViewModels}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="ui:ConversationMessageViewModel">
+            <Border Margin="0,4"
+                    Padding="8,6"
+                    CornerRadius="6"
+                    Background="{Binding Role, Converter={StaticResource RoleBgConverter}}"
+                    HorizontalAlignment="{Binding Role, Converter={StaticResource RoleAlignConverter}}">
+              <StackPanel>
+                <TextBlock Text="{Binding Header}"
+                           FontFamily="Cascadia Code,Consolas,monospace"
+                           FontSize="11"
+                           Foreground="#888"
+                           Margin="0,0,0,2" />
+                <TextBlock Text="{Binding Content}"
+                           FontFamily="Cascadia Code,Consolas,monospace"
+                           FontSize="13"
+                           Foreground="{Binding Role, Converter={StaticResource RoleFgConverter}}"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+  </DockPanel>
+</UserControl>

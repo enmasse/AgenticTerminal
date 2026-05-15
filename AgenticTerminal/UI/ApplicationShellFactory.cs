@@ -13,6 +13,9 @@ public static class ApplicationShellFactory
         ArgumentNullException.ThrowIfNull(sessionManager);
         ArgumentNullException.ThrowIfNull(terminalSession);
 
-        return new Hex1bApplicationShell(sessionManager, terminalSession, options);
+        var resolvedOptions = options ?? ApplicationShellOptions.Default;
+        var agentPanelFactory = new AgentPanelFactory(sessionManager, resolvedOptions.InitialAgentPanelMode);
+
+        return new Hex1bApplicationShell(sessionManager, terminalSession, agentPanelFactory, resolvedOptions);
     }
 }
